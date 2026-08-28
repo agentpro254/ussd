@@ -33,5 +33,9 @@ data class UssdHistoryItem(
     val isSuccess: Boolean = true,
     val isSimulation: Boolean = false,
     val responseSequence: String = "", // e.g. "1 ➔ 0772123456 ➔ 50"
-    val stepsSummary: String = ""
+    val stepsSummary: String = "",
+    val transactionId: String? = null,
+    val amount: String? = null,
+    val recipient: String? = null,
+    val rawResponseText: String = ""
 )

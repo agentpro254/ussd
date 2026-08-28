@@ -941,7 +941,11 @@ object UssdSessionManager {
                     isSuccess = isSuccess,
                     isSimulation = isSimulation,
                     responseSequence = sequenceFormatted,
-                    stepsSummary = stepsSummaryText
+                    stepsSummary = stepsSummaryText,
+                    transactionId = response.transactionId,
+                    amount = response.amount,
+                    recipient = response.recipient,
+                    rawResponseText = response.rawText
                 )
                 db.ussdDao().insertHistory(item)
             } catch (e: Exception) {
