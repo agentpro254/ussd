@@ -1,0 +1,6 @@
+{
+  "name": "codee",
+  "description": "Offline USSD automation app transforming multi-step USSD sessions into a clean, modern, and reliable UI experience.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

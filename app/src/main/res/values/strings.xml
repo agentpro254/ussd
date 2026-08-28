@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">codee</string>
+    <string name="accessibility_service_description">codee uses Accessibility Service to read USSD dialogs and automate multi-step sessions securely on your device.</string>
+    <string name="accessibility_service_label">codee USSD Automation Service</string>
+</resources>
