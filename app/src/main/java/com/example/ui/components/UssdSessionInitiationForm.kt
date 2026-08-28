@@ -373,154 +373,37 @@ fun UssdSessionInitiationForm(
                 }
             }
 
-            // Advanced: Multi-Step Automation Sequence & Sandbox Mode Accordion
+            // Live USSD Status Indicator Card
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                color = TealPrimary.copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, TealPrimary.copy(alpha = 0.2f))
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { isAdvancedOptionsExpanded = !isAdvancedOptionsExpanded }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoFixHigh,
-                                contentDescription = null,
-                                tint = TealPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Flow Automation & Sandbox Options",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        Icon(
-                            imageVector = if (isAdvancedOptionsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Sensors,
+                        contentDescription = null,
+                        tint = TealPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Direct Carrier Connection",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TealPrimary
                         )
-                    }
-
-                    AnimatedVisibility(
-                        visible = isAdvancedOptionsExpanded,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            // Step Sequence Input
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    text = "Pre-set Response Sequence (Comma-separated)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                OutlinedTextField(
-                                    value = sequenceStepsInput,
-                                    onValueChange = { sequenceStepsInput = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("sequence_steps_input"),
-                                    placeholder = {
-                                        Text(
-                                            text = "e.g. 1, 0772123456, 50",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    },
-                                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = TealPrimary,
-                                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                    )
-                                )
-                                if (parsedSteps.isNotEmpty()) {
-                                    Row(
-                                        modifier = Modifier.padding(top = 4.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Sequence:",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        parsedSteps.forEachIndexed { index, step ->
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = TealContainer,
-                                                modifier = Modifier.padding(horizontal = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Step ${index + 1}: $step",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = TealPrimary,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Sandbox Emulation Mode Toggle
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Terminal,
-                                            contentDescription = null,
-                                            tint = if (isDemoMode) EmeraldSuccess else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Text(
-                                            text = "Sandbox Simulation Mode",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    Text(
-                                        text = if (isDemoMode) "Testing in fast interactive simulator (No carrier charges)" else "Direct live cellular dialing via SIM hardware",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = isDemoMode,
-                                    onCheckedChange = { onToggleDemoMode() },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color.White,
-                                        checkedTrackColor = TealPrimary
-                                    ),
-                                    modifier = Modifier.testTag("form_demo_mode_switch")
-                                )
-                            }
-                        }
+                        Text(
+                            text = "Codee displays live responses interactively without automated inputs.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -532,7 +415,7 @@ fun UssdSessionInitiationForm(
                         val finalCode = if (!codeText.endsWith("#") && codeText.startsWith("*")) {
                             "$codeText#"
                         } else codeText
-                        onInitiateSession(finalCode, selectedSimSlot, parsedSteps, isDemoMode)
+                        onInitiateSession(finalCode, selectedSimSlot, emptyList(), isDemoMode)
                     }
                 },
                 modifier = Modifier
@@ -551,12 +434,12 @@ fun UssdSessionInitiationForm(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
-                        imageVector = if (parsedSteps.isNotEmpty()) Icons.Default.PlayArrow else Icons.Default.Call,
+                        imageVector = Icons.Default.Call,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = if (parsedSteps.isNotEmpty()) "Launch Automated Workflow" else "Initiate USSD Session",
+                        text = "Dial USSD Code",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )

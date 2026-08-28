@@ -26,11 +26,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Dialpad
@@ -41,13 +42,13 @@ import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +78,6 @@ import com.example.data.model.UssdCategoryItem
 import com.example.data.model.UssdCodeItem
 import com.example.ui.components.CategoryCard
 import com.example.ui.components.CategoryDetailSheet
-import com.example.ui.components.CodeInputPromptDialog
 import com.example.ui.components.PermissionStatusBanner
 import com.example.ui.components.SavedRoutineCard
 import com.example.ui.components.SimSelectionBottomSheet
@@ -89,11 +89,23 @@ import com.example.ui.theme.EmeraldSuccessBg
 import com.example.ui.theme.IndigoInfo
 import com.example.ui.theme.IndigoInfoBg
 import com.example.ui.theme.TealPrimary
+import com.example.ui.viewmodel.DialerMode
 import com.example.ui.viewmodel.PermissionStatus
 
 enum class InputInterfaceMode(val title: String, val icon: ImageVector) {
     FORM("Session Form", Icons.Default.EditNote),
     DIALPAD("Keypad Dial", Icons.Default.Dialpad)
+}
+
+fun formatUssdCode(input: String): String {
+    var trimmed = input.trim()
+    if (trimmed.isEmpty()) return ""
+    if (trimmed.startsWith("*") && trimmed.endsWith("#")) return trimmed
+    if (trimmed.startsWith("*") && !trimmed.endsWith("#")) return "$trimmed#"
+    if (!trimmed.startsWith("*") && trimmed.endsWith("#")) return "*$trimmed"
+    if (!trimmed.startsWith("*")) trimmed = "*$trimmed"
+    if (!trimmed.endsWith("#")) trimmed = "$trimmed#"
+    return trimmed
 }
 
 @Composable
@@ -109,6 +121,8 @@ fun HomeScreen(
     onSelectSimSlot: (Int) -> Unit,
     isDemoMode: Boolean,
     onToggleDemoMode: () -> Unit,
+    dialerMode: DialerMode = DialerMode.CODEE_OVERLAY,
+    onSelectDialerMode: ((DialerMode) -> Unit)? = null,
     savedRoutines: List<SavedUssdRoutine>,
     onRunRoutine: (SavedUssdRoutine) -> Unit,
     onToggleFavorite: (SavedUssdRoutine) -> Unit,
@@ -118,14 +132,15 @@ fun HomeScreen(
     permissionStatus: PermissionStatus,
     onOpenPermissionWizard: () -> Unit,
     onCreateRoutineClick: () -> Unit,
+    recentHistory: List<com.example.data.local.UssdHistoryItem> = emptyList(),
+    onNavigateToHistory: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var inputMode by remember { mutableStateOf(InputInterfaceMode.FORM) }
     var globalSearchQuery by remember { mutableStateOf("") }
+    var showDialerChooserDialog by remember { mutableStateOf(false) }
 
     // Dialog & Sheet States
-    var activeCategorySheet by remember { mutableStateOf<UssdCategoryItem?>(null) }
-    var codeForInputPrompt by remember { mutableStateOf<UssdCodeItem?>(null) }
     var codeForSimChooser by remember { mutableStateOf<UssdCodeItem?>(null) }
 
     val searchResults = remember(globalSearchQuery) {
@@ -138,9 +153,7 @@ fun HomeScreen(
     }
 
     fun handleCodeLaunch(codeItem: UssdCodeItem) {
-        if (codeItem.requiresInput) {
-            codeForInputPrompt = codeItem
-        } else if (simCards.size > 1) {
+        if (simCards.size > 1) {
             codeForSimChooser = codeItem
         } else {
             onInitiateSession(codeItem.code, selectedSimSlot, emptyList(), isDemoMode)
@@ -196,28 +209,58 @@ fun HomeScreen(
                     }
                 }
 
-                Surface(
-                    onClick = onOpenPermissionWizard,
-                    shape = RoundedCornerShape(20.dp),
-                    color = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccessBg else IndigoInfoBg
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    // Dialer Engine Selector Badge
+                    Surface(
+                        onClick = { showDialerChooserDialog = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = TealPrimary.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, TealPrimary.copy(alpha = 0.25f))
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccess else IndigoInfo,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = if (permissionStatus.isAllMandatoryGranted) "100% Offline" else "Setup Required",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccess else IndigoInfo
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(text = dialerMode.icon, fontSize = 12.sp)
+                            Text(
+                                text = when (dialerMode) {
+                                    DialerMode.CODEE_OVERLAY -> "Live"
+                                    DialerMode.SYSTEM_DIALER -> "System"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = TealPrimary
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = onOpenPermissionWizard,
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccessBg else IndigoInfoBg
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccess else IndigoInfo,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (permissionStatus.isAllMandatoryGranted) "100% Offline" else "Setup",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (permissionStatus.isAllMandatoryGranted) EmeraldSuccess else IndigoInfo
+                            )
+                        }
                     }
                 }
             }
@@ -233,40 +276,159 @@ fun HomeScreen(
             }
         }
 
-        // Global Search Bar across all 31+ Preloaded Codes
+        // Global Smart USSD Input & Search Bar with Auto-Format Dial
         item {
-            OutlinedTextField(
-                value = globalSearchQuery,
-                onValueChange = { globalSearchQuery = it },
-                placeholder = { Text("Search 31+ USSD codes (e.g. M-PESA, *544#, KPLC)...") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = TealPrimary
-                    )
-                },
-                trailingIcon = {
-                    if (globalSearchQuery.isNotEmpty()) {
-                        IconButton(onClick = { globalSearchQuery = "" }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear search",
-                                modifier = Modifier.size(18.dp)
-                            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = globalSearchQuery,
+                    onValueChange = { globalSearchQuery = it },
+                    placeholder = { Text("Enter USSD code (e.g. 334, *144#)...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search or Dial",
+                            tint = TealPrimary
+                        )
+                    },
+                    trailingIcon = {
+                        if (globalSearchQuery.isNotEmpty()) {
+                            IconButton(onClick = { globalSearchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear search",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSend = {
+                            if (globalSearchQuery.isNotBlank()) {
+                                val formatted = formatUssdCode(globalSearchQuery)
+                                onInitiateSession(formatted, selectedSimSlot, emptyList(), isDemoMode)
+                            }
+                        }
+                    ),
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = TealPrimary,
+                        focusedLabelColor = TealPrimary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("global_ussd_search_input")
+                )
+
+                if (globalSearchQuery.isNotBlank()) {
+                    androidx.compose.material3.FilledIconButton(
+                        onClick = {
+                            val formatted = formatUssdCode(globalSearchQuery)
+                            onInitiateSession(formatted, selectedSimSlot, emptyList(), isDemoMode)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                            containerColor = TealPrimary
+                        ),
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Dial Code",
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
+        // Pro Tip & Quick Suggestions Chips
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Pro Tip Banner
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = TealPrimary.copy(alpha = 0.08f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TealPrimary.copy(alpha = 0.2f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(text = "💡", fontSize = 16.sp)
+                        Text(
+                            text = "Enter any USSD code. Codee will handle and display it cleanly.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Quick Suggestion Chips Row
+                val suggestionChips = listOf(
+                    Pair("*334#", "M-PESA"),
+                    Pair("*144#", "Airtime"),
+                    Pair("*106#", "SIM Reg"),
+                    Pair("*100#", "Support"),
+                    Pair("*544#", "Bonga"),
+                    Pair("*456#", "Data"),
+                    Pair("*247#", "Equity"),
+                    Pair("*522#", "KCB"),
+                    Pair("*977#", "KPLC"),
+                    Pair("*222#", "eCitizen")
+                )
+
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(suggestionChips) { chip ->
+                        Surface(
+                            onClick = {
+                                onDialClear()
+                                chip.first.forEach { onDialChar(it) }
+                                onInitiateSession(chip.first, selectedSimSlot, emptyList(), isDemoMode)
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = chip.first,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TealPrimary
+                                )
+                                Text(
+                                    text = chip.second,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = TealPrimary,
-                    focusedLabelColor = TealPrimary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("global_ussd_search_input")
-            )
+                }
+            }
         }
 
         // 1-Tap Offline M-PESA Quick Actions Grid
@@ -320,8 +482,8 @@ fun HomeScreen(
 
                     // 4x2 Quick Action Icons Grid
                     val quickActions = listOf(
-                        Triple("Send Money", "*334#", Icons.Default.Send),
-                        Triple("Withdraw", "*334#", Icons.Default.CallReceived),
+                        Triple("Send Money", "*334#", Icons.AutoMirrored.Filled.Send),
+                        Triple("Withdraw", "*334#", Icons.AutoMirrored.Filled.CallReceived),
                         Triple("Buy Airtime", "*141#", Icons.Default.PhoneAndroid),
                         Triple("Pay Bill", "*334#", Icons.Default.Receipt),
                         Triple("Lipa Na M-PESA", "*334#", Icons.Default.ShoppingCart),
@@ -490,59 +652,6 @@ fun HomeScreen(
             }
         }
 
-        // Categories Section (Grid of 6 Preloaded Categories from article)
-        item {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Categories",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "31+ Codes",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // 3x2 Grid for Categories
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val categories = PreloadedUssdRepository.allCategories
-                    for (i in categories.indices step 3) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            for (j in 0 until 3) {
-                                val index = i + j
-                                if (index < categories.size) {
-                                    val cat = categories[index]
-                                    CategoryCard(
-                                        category = cat,
-                                        onClick = { activeCategorySheet = cat },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                } else {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Starred Favorites Section
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -636,6 +745,224 @@ fun HomeScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = catColor
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick Dial Shortcuts Section (Grouped by Network / Type)
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = TealPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Quick Dial Shortcuts",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Text(
+                        text = "Tap to Dial",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Grouped Shortcuts Cards
+                val shortcutGroups = listOf(
+                    Triple(
+                        "Safaricom",
+                        "📱",
+                        listOf(
+                            Triple("*334#", "M-PESA Menu", "💰"),
+                            Triple("*144#", "Check Airtime", "📱"),
+                            Triple("*106#", "SIM Registration", "🆔"),
+                            Triple("*100#", "Customer Care", "📞"),
+                            Triple("*544#", "Bonga Points", "⭐"),
+                            Triple("*456#", "Data & Voice Bundles", "📦"),
+                            Triple("*400#", "Home Fibre & 5G", "🏠"),
+                            Triple("*126*1#", "Okoa Jahazi", "🆘")
+                        )
+                    ),
+                    Triple(
+                        "Airtel & Telkom",
+                        "📡",
+                        listOf(
+                            Triple("*544#", "Airtel Menu", "📡"),
+                            Triple("*133#", "Airtel Balance", "📱"),
+                            Triple("*150#", "Airtel Money", "💰"),
+                            Triple("*188#", "Telkom Menu", "📶"),
+                            Triple("*160#", "T-Kash", "💰"),
+                            Triple("*180#", "Telkom Data", "📦")
+                        )
+                    ),
+                    Triple(
+                        "Banks & Mobile Banking",
+                        "🏦",
+                        listOf(
+                            Triple("*247#", "Equity Bank", "🏦"),
+                            Triple("*522#", "KCB Bank", "🏦"),
+                            Triple("*667#", "Co-op Bank", "🏦"),
+                            Triple("*325#", "Family Bank", "🏦")
+                        )
+                    ),
+                    Triple(
+                        "Government & Utilities",
+                        "🏛️",
+                        listOf(
+                            Triple("*977#", "KPLC Power Tokens", "💡"),
+                            Triple("*155#", "NHIF / SHA", "🏥"),
+                            Triple("*572#", "KRA M-Service", "📋"),
+                            Triple("*222#", "eCitizen Portal", "🪪"),
+                            Triple("*642#", "HELB Loans", "🎓"),
+                            Triple("*303#", "NSSF Pension", "🏗️"),
+                            Triple("*433#", "CRB Clearance", "📊"),
+                            Triple("*888#", "Nairobi Water", "💧")
+                        )
+                    )
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    shortcutGroups.forEach { group ->
+                        var isExpanded by remember { mutableStateOf(false) }
+
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { isExpanded = !isExpanded }
+                                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(text = group.second, fontSize = 18.sp)
+                                        Text(
+                                            text = group.first,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "${group.third.size} codes",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Icon(
+                                            imageVector = if (isExpanded) Icons.Default.Close else Icons.Default.Bolt,
+                                            contentDescription = null,
+                                            tint = TealPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                if (isExpanded) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                        thickness = 1.dp
+                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        group.third.forEach { action ->
+                                            Surface(
+                                                onClick = {
+                                                    val found = PreloadedUssdRepository.allCodes.firstOrNull { it.code == action.first }
+                                                    if (found != null) {
+                                                        handleCodeLaunch(found)
+                                                    } else {
+                                                        onInitiateSession(action.first, selectedSimSlot, emptyList(), isDemoMode)
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Text(text = action.third, fontSize = 16.sp)
+                                                        Column {
+                                                            Text(
+                                                                text = action.second,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                            Text(
+                                                                text = action.first,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = TealPrimary
+                                                            )
+                                                        }
+                                                    }
+                                                    Surface(
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        color = TealPrimary.copy(alpha = 0.1f)
+                                                    ) {
+                                                        Text(
+                                                            text = "Dial",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = TealPrimary,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -786,37 +1113,137 @@ fun HomeScreen(
             )
         }
 
+        // Recent Transactions Section (Clean - No Balance)
         item {
-            Spacer(modifier = Modifier.height(24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Recent Transactions",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                if (onNavigateToHistory != null && recentHistory.isNotEmpty()) {
+                    androidx.compose.material3.TextButton(
+                        onClick = onNavigateToHistory,
+                        modifier = Modifier.testTag("see_all_transactions_btn")
+                    ) {
+                        Text(
+                            text = "See All",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = com.example.ui.components.CodeeBrandGreen
+                        )
+                    }
+                }
+            }
         }
-    }
 
-    // Modal: Category Detail Sheet
-    activeCategorySheet?.let { category ->
-        CategoryDetailSheet(
-            category = category,
-            favoriteCodeIds = favoriteCodeIds,
-            onSelectCode = { codeItem ->
-                activeCategorySheet = null
-                handleCodeLaunch(codeItem)
-            },
-            onToggleFavorite = { codeItem ->
-                onToggleFavoriteCode(codeItem.id)
-            },
-            onDismiss = { activeCategorySheet = null }
-        )
-    }
+        if (recentHistory.isEmpty()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "No recent transactions yet. Dial or tap an action above to start.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            items(recentHistory.take(4), key = { it.id }) { item ->
+                val isSent = !item.summary.contains("received", ignoreCase = true)
+                val accentColor = if (isSent) com.example.ui.components.CodeeBrandGreen else com.example.ui.components.CodeeBrandBlue
+                val icon = if (isSent) "📤" else "📥"
+                val prefix = if (isSent) "-" else "+"
 
-    // Modal: Code Input Prompt Dialog (e.g. Voucher PIN or M-PESA PIN)
-    codeForInputPrompt?.let { codeItem ->
-        CodeInputPromptDialog(
-            codeItem = codeItem,
-            onConfirm = { resolvedCode ->
-                codeForInputPrompt = null
-                onInitiateSession(resolvedCode, selectedSimSlot, emptyList(), isDemoMode)
-            },
-            onDismiss = { codeForInputPrompt = null }
-        )
+                val person = item.recipient?.takeIf { it.isNotBlank() }
+                    ?: if (isSent) "M-PESA Recipient" else "M-PESA Sender"
+
+                val timeStr = remember(item.timestamp) {
+                    val diff = System.currentTimeMillis() - item.timestamp
+                    val days = diff / (1000 * 60 * 60 * 24)
+                    when {
+                        days == 0L -> "Today • " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(item.timestamp))
+                        days == 1L -> "Yesterday"
+                        days < 7L -> "$days days ago"
+                        else -> java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date(item.timestamp))
+                    }
+                }
+
+                val amountDisplay = item.amount?.takeIf { it.isNotBlank() } ?: "KES --"
+
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("recent_tx_item_${item.id}")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = icon, fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (isSent) "Sent to $person" else "Received from $person",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = timeStr,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "$prefix $amountDisplay",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "⚡ Secured by Codee",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 
     // Modal: Dual-SIM Chooser Bottom Sheet
@@ -832,6 +1259,76 @@ fun HomeScreen(
                 onInitiateSession(codeItem.code, slot, emptyList(), isDemoMode)
             },
             onDismiss = { codeForSimChooser = null }
+        )
+    }
+
+    // Modal: Choose Default Dialer Dialog
+    if (showDialerChooserDialog && onSelectDialerMode != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDialerChooserDialog = false },
+            title = {
+                Text(
+                    text = "Choose Default Dialer",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Select how USSD codes are executed and rendered on your device:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    DialerMode.values().forEach { mode ->
+                        val isSelected = dialerMode == mode
+                        Surface(
+                            onClick = {
+                                onSelectDialerMode(mode)
+                                showDialerChooserDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) TealPrimary.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(text = mode.icon, fontSize = 20.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = mode.title,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = mode.subtitle,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showDialerChooserDialog = false }) {
+                    Text("Close", color = TealPrimary, fontWeight = FontWeight.Bold)
+                }
+            }
         )
     }
 }

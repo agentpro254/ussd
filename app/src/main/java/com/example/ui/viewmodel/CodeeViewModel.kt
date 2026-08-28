@@ -24,6 +24,19 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+enum class DialerMode(val title: String, val subtitle: String, val icon: String) {
+    CODEE_OVERLAY(
+        title = "Codee Live Display (Recommended)",
+        subtitle = "Intercepts live carrier USSD popups and presents a clean interactive view with zero auto-dialing.",
+        icon = "⚡"
+    ),
+    SYSTEM_DIALER(
+        title = "Android System Phone Dialer",
+        subtitle = "Hands USSD requests directly to the default phone app dialer.",
+        icon = "📞"
+    )
+}
+
 data class PermissionStatus(
     val isAccessibilityGranted: Boolean = false,
     val isOverlayGranted: Boolean = false,
@@ -43,6 +56,7 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as CodeeApplication
     private val dao = app.database.ussdDao()
+    private val prefs = application.getSharedPreferences("codee_prefs", Context.MODE_PRIVATE)
 
     val sessionState: StateFlow<UssdSessionState> = UssdSessionManager.sessionState
     val activeFlow: StateFlow<com.example.data.model.UssdSessionFlow?> = UssdSessionManager.currentFlow
@@ -65,8 +79,23 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
     private val _dialpadText = MutableStateFlow("")
     val dialpadText: StateFlow<String> = _dialpadText.asStateFlow()
 
-    private val _isDemoMode = MutableStateFlow(true) // Default to demo friendly so emulator works out of the box
+    private val _isDemoMode = MutableStateFlow(false)
     val isDemoMode: StateFlow<Boolean> = _isDemoMode.asStateFlow()
+
+    private val _selectedDialerMode = MutableStateFlow(
+        try {
+            val saved = prefs.getString("dialer_mode", DialerMode.CODEE_OVERLAY.name)
+            DialerMode.valueOf(saved ?: DialerMode.CODEE_OVERLAY.name)
+        } catch (e: Exception) {
+            DialerMode.CODEE_OVERLAY
+        }
+    )
+    val selectedDialerMode: StateFlow<DialerMode> = _selectedDialerMode.asStateFlow()
+
+    fun setDialerMode(mode: DialerMode) {
+        _selectedDialerMode.value = mode
+        prefs.edit().putString("dialer_mode", mode.name).apply()
+    }
 
     // Smart USSD Engine
     val smartFlowEngine = SmartUssdFlowEngine()
@@ -202,23 +231,38 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
         code: String = _dialpadText.value,
         simSlot: Int = _selectedSimSlot.value,
         automatedSteps: List<String> = emptyList(),
-        forceSim: Boolean = _isDemoMode.value
+        forceSim: Boolean = false
     ) {
         if (code.isBlank()) return
         val context = getApplication<Application>()
+
+        if (_selectedDialerMode.value == DialerMode.SYSTEM_DIALER) {
+            // Hand off to Android's system phone dialer
+            try {
+                val encoded = android.net.Uri.encode("#")
+                val formatted = code.replace("#", encoded)
+                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:$formatted")).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+                return
+            } catch (e: Exception) {
+                // Fallback to in-app session
+            }
+        }
+
         UssdSessionManager.startUssdSession(
             context = context,
             rawCode = code,
             simSlot = simSlot,
-            automatedSteps = automatedSteps,
-            forceSimulation = forceSim || !PermissionManager.isCallPhoneGranted(context)
+            automatedSteps = emptyList(),
+            forceSimulation = false
         )
     }
 
     fun launchSmartFlow(
         code: String,
-        goal: String,
-        initialData: Map<String, String>,
+        goal: String = "",
         simSlot: Int = _selectedSimSlot.value
     ) {
         val context = getApplication<Application>()
@@ -230,9 +274,8 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
             context = context,
             ussdCode = code,
             goal = goal,
-            initialData = initialData,
             simSlot = simSlot,
-            forceSimulation = _isDemoMode.value || !PermissionManager.isCallPhoneGranted(context)
+            forceSimulation = false
         )
     }
 

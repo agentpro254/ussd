@@ -1,12 +1,5 @@
 package com.example.data.model
 
-data class UssdStepItem(
-    val stepNumber: Int,
-    val label: String,
-    val inputHint: String = "",
-    val isFinal: Boolean = false
-)
-
 data class UssdCodeItem(
     val id: String,
     val name: String,
@@ -15,26 +8,9 @@ data class UssdCodeItem(
     val icon: String,
     val category: String,
     val colorHex: String,
-    val requiresInput: Boolean = false,
-    val inputHint: String = "",
-    val inputPlaceholder: String = "",
-    val isFavorite: Boolean = false,
-    val steps: List<UssdStepItem> = emptyList()
+    val isFavorite: Boolean = false
 ) {
-    /**
-     * Resolves variable placeholders like `*141*voucher#` with real user input.
-     */
-    fun resolveExecutableCode(userInput: String = ""): String {
-        return when {
-            code.contains("voucher", ignoreCase = true) -> {
-                code.replace("voucher", userInput.trim(), ignoreCase = true)
-            }
-            code.contains("PIN", ignoreCase = false) -> {
-                code.replace("PIN", userInput.trim())
-            }
-            else -> code
-        }
-    }
+    fun resolveExecutableCode(userInput: String = ""): String = code
 }
 
 data class UssdCategoryItem(
@@ -66,15 +42,7 @@ object PreloadedUssdRepository {
                 icon = "💰",
                 category = "Safaricom",
                 colorHex = "#10B981",
-                isFavorite = true,
-                steps = listOf(
-                    UssdStepItem(1, "Send Money", "Enter recipient phone number"),
-                    UssdStepItem(2, "Withdraw Cash", "Enter agent or ATM number"),
-                    UssdStepItem(3, "Buy Airtime", "Enter airtime amount"),
-                    UssdStepItem(4, "Pay Bill", "Enter business number & account"),
-                    UssdStepItem(5, "Lipa Na M-PESA", "Enter till number"),
-                    UssdStepItem(6, "My Account", "Check balance / Mini statement")
-                )
+                isFavorite = true
             ),
             UssdCodeItem(
                 id = "saf_002",
@@ -89,14 +57,11 @@ object PreloadedUssdRepository {
             UssdCodeItem(
                 id = "saf_003",
                 name = "Load Airtime (Voucher)",
-                code = "*141*voucher#",
-                description = "Load airtime from a scratch card (enter your scratch card PIN)",
+                code = "*141#",
+                description = "Load airtime from a scratch card voucher PIN",
                 icon = "🎫",
                 category = "Safaricom",
-                colorHex = "#10B981",
-                requiresInput = true,
-                inputHint = "Enter Scratch Card Voucher PIN",
-                inputPlaceholder = "e.g. 839201948201"
+                colorHex = "#10B981"
             ),
             UssdCodeItem(
                 id = "saf_004",
@@ -147,14 +112,11 @@ object PreloadedUssdRepository {
             UssdCodeItem(
                 id = "saf_009",
                 name = "Okoa Jahazi",
-                code = "*126*PIN#",
-                description = "Emergency airtime advance credit (requires M-PESA PIN)",
+                code = "*126#",
+                description = "Emergency airtime advance credit service",
                 icon = "🆘",
                 category = "Safaricom",
-                colorHex = "#10B981",
-                requiresInput = true,
-                inputHint = "Enter M-PESA PIN",
-                inputPlaceholder = "4-digit secret PIN"
+                colorHex = "#10B981"
             ),
             UssdCodeItem(
                 id = "saf_010",

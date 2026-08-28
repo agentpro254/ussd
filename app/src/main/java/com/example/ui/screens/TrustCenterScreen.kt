@@ -47,6 +47,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Intent
+import android.provider.Settings
+import androidx.compose.foundation.layout.width
 import com.example.permissions.PermissionManager
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.AmberWarningBg
@@ -56,11 +59,14 @@ import com.example.ui.theme.IndigoInfo
 import com.example.ui.theme.IndigoInfoBg
 import com.example.ui.theme.TealContainer
 import com.example.ui.theme.TealPrimary
+import com.example.ui.viewmodel.DialerMode
 import com.example.ui.viewmodel.PermissionStatus
 
 @Composable
 fun TrustCenterScreen(
     status: PermissionStatus,
+    dialerMode: DialerMode,
+    onSelectDialerMode: (DialerMode) -> Unit,
     onRefreshPermissions: () -> Unit,
     onRequestPhonePermissions: () -> Unit,
     modifier: Modifier = Modifier
@@ -88,7 +94,7 @@ fun TrustCenterScreen(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "How codee automates USSD securely",
+                    text = "Zero unnotified automation & local processing",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -107,6 +113,108 @@ fun TrustCenterScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        // Default Dialer Section
+        Text(
+            text = "Default USSD Dialer Engine",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Choose how Codee interacts with cellular carrier requests and system dialogs:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            DialerMode.values().forEach { mode ->
+                val isSelected = dialerMode == mode
+                Card(
+                    onClick = { onSelectDialerMode(mode) },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) TealPrimary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = if (isSelected) 1.8.dp else 1.dp,
+                        color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 2.dp else 1.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(text = mode.icon, fontSize = 22.sp)
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = mode.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = mode.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        androidx.compose.material3.RadioButton(
+                            selected = isSelected,
+                            onClick = { onSelectDialerMode(mode) },
+                            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                                selectedColor = TealPrimary
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedButton(
+            onClick = {
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    try {
+                        val intent = Intent(Settings.ACTION_SETTINGS)
+                        context.startActivity(intent)
+                    } catch (e2: Exception) {
+                        // ignore
+                    }
+                }
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = Icons.Default.Call,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = TealPrimary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Open Android Default Apps Settings", color = TealPrimary, style = MaterialTheme.typography.labelMedium)
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
 
         // Offline Guarantee Card
         Card(

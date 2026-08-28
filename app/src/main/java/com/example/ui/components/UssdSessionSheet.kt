@@ -35,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
@@ -48,7 +49,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Route
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
@@ -314,7 +314,7 @@ private fun DialingContent(
         Spacer(modifier = Modifier.height(18.dp))
 
         Text(
-            text = "Initiating USSD Session",
+            text = "Waiting for Carrier Response...",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
@@ -371,21 +371,6 @@ private fun DialingContent(
                     )
                 }
             }
-
-            if (isSimulation) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = IndigoInfoBg
-                ) {
-                    Text(
-                        text = "Sandbox Mode",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = IndigoInfo,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -439,7 +424,7 @@ private fun ActiveSessionContent(
                     color = TealContainer
                 ) {
                     Text(
-                        text = "Step $step",
+                        text = "Live USSD",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = TealPrimary,
@@ -479,21 +464,6 @@ private fun ActiveSessionContent(
                         )
                     }
                 }
-
-                if (isSimulation) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = IndigoInfoBg
-                    ) {
-                        Text(
-                            text = "Simulator",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = IndigoInfo,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
             }
 
             IconButton(
@@ -508,41 +478,7 @@ private fun ActiveSessionContent(
             }
         }
 
-        // Multi-Step Breadcrumb Sequence Bar
-        if (flow != null && flow.steps.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            SessionBreadcrumbBar(flow = flow)
-        }
-
-        if (isAutomating) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = EmeraldSuccessBg,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = EmeraldSuccess
-                    )
-                    Text(
-                        text = "Executing automated sequence (${pendingInputs.size} steps queued)...",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = EmeraldSuccess
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Title & Description Card
         Text(
@@ -661,7 +597,7 @@ private fun ActiveSessionContent(
                                         .testTag("submit_menu_manual_input_btn")
                                  ) {
                                     Icon(
-                                        imageVector = Icons.Default.Send,
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
                                         contentDescription = "Send",
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -1282,18 +1218,28 @@ fun TransactionConfirmationCardLayout(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isSent = !response.rawText.contains("received", ignoreCase = true) &&
+            !response.body.contains("received", ignoreCase = true) &&
+            !response.title.contains("received", ignoreCase = true)
+    val accentColor = if (isSent) CodeeBrandGreen else CodeeBrandBlue
+    val title = if (isSent) "Money Sent" else "Money Received"
+    val label = if (isSent) "Sent to" else "Received from"
+    val displayAmount = response.amount ?: "KES 500.00"
+    val mpesaCode = response.transactionId ?: "XYZ12345ABC"
+    val person = response.recipient
+
     val now = remember {
         val sdf = SimpleDateFormat("dd MMM yyyy · HH:mm", Locale.getDefault())
         sdf.format(Date())
     }
 
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = Color.White
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-        border = BorderStroke(1.5.dp, EmeraldSuccess.copy(alpha = 0.35f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        border = BorderStroke(1.5.dp, accentColor.copy(alpha = 0.25f)),
         modifier = modifier
             .fillMaxWidth()
             .testTag("transaction_confirmation_card")
@@ -1304,119 +1250,163 @@ fun TransactionConfirmationCardLayout(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Success Circle Badge
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(EmeraldSuccess.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = "Success",
-                    tint = EmeraldSuccess,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
+            // Codee Branded Checkmark Pulse
+            CodeeCheckmarkBadge(color = accentColor)
 
             Spacer(modifier = Modifier.height(14.dp))
 
             // Main Title
             Text(
-                text = "✅ Money Sent",
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = Color(0xFF1A1A1A)
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Large Bold Amount Display
-            val displayAmount = response.amount ?: "KES 500.00"
-            Text(
-                text = displayAmount,
-                style = MaterialTheme.typography.headlineLarge,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = EmeraldSuccess
-            )
-
-            // Recipient / Sender Label
-            if (!response.recipient.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
+            // Status Badge
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = accentColor.copy(alpha = 0.1f)
+            ) {
                 Text(
-                    text = "Sent to ${response.recipient}",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "✅ Completed",
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = accentColor,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
                 )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Subtle Divider
-            HorizontalDivider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                thickness = 1.dp,
-                modifier = Modifier.fillMaxWidth(0.9f)
+            // Codee Brand Gradient Divider
+            Box(
+                modifier = Modifier
+                    .width(44.dp)
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(
+                        androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            colors = listOf(accentColor, accentColor.copy(alpha = 0.25f))
+                        )
+                    )
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Transaction Ref & Timestamp
-            val mpesaCode = response.transactionId ?: "XYZ12345ABC"
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text = "M-PESA Code:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = mpesaCode,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
+            // Large Bold Amount Display
             Text(
-                text = now,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = displayAmount,
+                style = MaterialTheme.typography.headlineLarge,
+                fontSize = 38.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = accentColor,
+                letterSpacing = (-0.5).sp,
+                textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Dual Verification Badge (USSD + SMS Verified)
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = EmeraldSuccessBg,
-                border = BorderStroke(1.dp, EmeraldSuccess.copy(alpha = 0.3f))
-            ) {
+            // Recipient / Sender Label
+            if (!person.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFF888888),
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Shield,
+                        imageVector = Icons.Default.Send,
                         contentDescription = null,
-                        tint = EmeraldSuccess,
-                        modifier = Modifier.size(16.dp)
+                        tint = accentColor,
+                        modifier = Modifier.size(15.dp)
                     )
                     Text(
-                        text = "✅ Verified by USSD & M-PESA SMS",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = person,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = EmeraldSuccess
+                        color = Color(0xFF1A1A1A)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFFF0F0F0), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Detail Chips Row (Code + Time)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFF6F8FA),
+                    border = BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                    modifier = Modifier.clickable {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("M-PESA Code", mpesaCode))
+                        Toast.makeText(context, "M-PESA code copied: $mpesaCode", Toast.LENGTH_SHORT).show()
+                        onCopy?.invoke()
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Code,
+                            contentDescription = null,
+                            tint = Color(0xFF888888),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Code: ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF888888)
+                        )
+                        Text(
+                            text = mpesaCode,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF1A1A1A)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFF6F8FA),
+                    border = BorderStroke(1.dp, Color(0xFFE5E7EB))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Time: ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF888888)
+                        )
+                        Text(
+                            text = now.substringAfter("· ").trim(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1A1A1A)
+                        )
+                    }
                 }
             }
 
@@ -1450,7 +1440,7 @@ fun TransactionConfirmationCardLayout(
                     onClick = {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            val summary = "✅ M-PESA Receipt\nAmount: $displayAmount\nTo: ${response.recipient ?: "Recipient"}\nCode: $mpesaCode\nDate: $now\n\n⚡ Powered by Codee"
+                            val summary = "✅ M-PESA Receipt\nAmount: $displayAmount\nTo: ${response.recipient ?: "Recipient"}\nCode: $mpesaCode\nDate: $now\n\n⚡ Secured by Codee"
                             putExtra(Intent.EXTRA_TEXT, summary)
                         }
                         context.startActivity(Intent.createChooser(shareIntent, "Share Receipt"))
@@ -1472,37 +1462,41 @@ fun TransactionConfirmationCardLayout(
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = onDone,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = EmeraldSuccess,
+                        containerColor = accentColor,
                         contentColor = Color.White
                     ),
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
+                        .fillMaxWidth(0.65f)
+                        .height(48.dp)
                         .testTag("transaction_done_btn")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Done",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Done",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Branding Footer
             Text(
-                text = "⚡ Powered by Codee",
+                text = "⚡ Secured by Codee",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                color = Color(0xFF999999),
                 fontWeight = FontWeight.Medium
             )
         }

@@ -128,33 +128,6 @@ fun UssdCodeTile(
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
-
-                    if (codeItem.requiresInput) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = Color(0xFFF59E0B).copy(alpha = 0.15f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Key,
-                                    contentDescription = null,
-                                    tint = Color(0xFFD97706),
-                                    modifier = Modifier.size(10.dp)
-                                )
-                                Text(
-                                    text = "Requires PIN",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFD97706)
-                                )
-                            }
-                        }
-                    }
                 }
 
                 if (codeItem.description.isNotBlank()) {

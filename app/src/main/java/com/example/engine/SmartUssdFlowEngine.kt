@@ -41,7 +41,6 @@ class SmartUssdFlowEngine {
 
     // Current State
     private var currentGoal: String = ""
-    private var flowData = mutableMapOf<String, String>()
     private val navigationHistory = mutableListOf<String>()
     private var isEngineActive = false
 
@@ -61,18 +60,15 @@ class SmartUssdFlowEngine {
     fun startFlow(
         context: Context,
         ussdCode: String,
-        goal: String,
-        initialData: Map<String, String> = emptyMap(),
+        goal: String = "",
         simSlot: Int = 0,
         forceSimulation: Boolean = false
     ) {
         currentGoal = goal
-        flowData.clear()
-        flowData.putAll(initialData)
         navigationHistory.clear()
         isEngineActive = true
 
-        val msg = "📱 Dialing $ussdCode for goal '$goal'..."
+        val msg = if (goal.isNotBlank()) "📱 Dialing $ussdCode for '$goal'..." else "📱 Dialing $ussdCode..."
         _statusMessage.value = msg
         onStatusUpdate?.invoke(msg)
 
@@ -85,7 +81,7 @@ class SmartUssdFlowEngine {
     }
 
     /**
-     * Process each incoming USSD response intelligently
+     * Process each incoming USSD response - 100% interactive, zero silent recipient/account automation
      */
     fun handleResponse(response: ParsedUssdResponse) {
         if (!isEngineActive) return
@@ -97,170 +93,43 @@ class SmartUssdFlowEngine {
             return
         }
 
-        // Check if input is required
+        // Always prompt user directly for input - no hidden recipient/account prefilling or auto-submission
         if (needsUserInput(response)) {
             processUserInputStep(response)
             return
         }
 
-        // Navigate menu intelligently
+        // For menus, present options to the user with recommendation instead of silent automatic submission
         if (response.isMenu && response.options.isNotEmpty()) {
-            navigateMenu(response, currentGoal)
+            val suggested = findOptionForGoal(response.options, currentGoal)
+            val msg = if (suggested != null) {
+                "💡 Suggested: ${suggested.id}. ${suggested.label}"
+            } else {
+                "Please select an option:"
+            }
+            _statusMessage.value = msg
+            onStatusUpdate?.invoke(msg)
+            showOptionsToUser(response, suggested)
             return
         }
 
-        // Fallback: request input or show menu
+        // Fallback: request input or show response to user
         requestUserInput(response)
-    }
-
-    private fun navigateMenu(response: ParsedUssdResponse, goal: String) {
-        val targetOption = findOptionForGoal(response.options, goal)
-        if (targetOption != null) {
-            val status = "🔍 Found \"$goal\", selecting option ${targetOption.id} (${targetOption.label})..."
-            _statusMessage.value = status
-            onStatusUpdate?.invoke(status)
-            navigationHistory.add("${targetOption.id}: ${targetOption.label}")
-
-            scope.launch {
-                delay(400)
-                UssdSessionManager.submitStepResponse(targetOption.id)
-            }
-        } else {
-            // Show options to user fallback
-            showOptionsToUser(response)
-        }
-    }
-
-    fun findOptionForGoal(options: List<UssdMenuOption>, goal: String): UssdMenuOption? {
-        val keywords = GOAL_KEYWORDS[goal] ?: listOf(goal)
-
-        val scored = options.map { opt ->
-            val text = opt.label.lowercase()
-            var score = 0
-
-            for (kw in keywords) {
-                if (text.contains(kw.lowercase())) {
-                    score += 10
-                }
-            }
-
-            if (keywords.any { text.equals(it, ignoreCase = true) }) {
-                score += 15
-            }
-
-            Pair(opt, score)
-        }.sortedByDescending { it.second }
-
-        return if (scored.isNotEmpty() && scored.first().second > 0) {
-            scored.first().first
-        } else {
-            options.firstOrNull()
-        }
-    }
-
-    private fun isGoalReached(response: ParsedUssdResponse, goal: String): Boolean {
-        val text = response.rawText.lowercase()
-        if (goal == "check_balance" && (response.balance != null || text.contains("balance is") || text.contains("airtime bal"))) {
-            return true
-        }
-        if (response.type == UssdResponseType.SUCCESS_RESULT || response.type == UssdResponseType.ERROR_RESULT) {
-            return true
-        }
-        return false
-    }
-
-    private fun handleGoalReached(response: ParsedUssdResponse, goal: String) {
-        isEngineActive = false
-        val amount = response.amount ?: flowData["amount"] ?: "KES 0.00"
-        val recipient = response.recipient ?: flowData["phone"] ?: flowData["recipient"] ?: "Recipient"
-        val code = response.transactionId ?: "QJK" + (100000..999999).random()
-
-        val type = when (goal) {
-            "send_money" -> TransactionType.SENT
-            "buy_airtime" -> TransactionType.AIRTIME
-            "pay_bill", "lipa_na_mpesa" -> TransactionType.BILL_PAYMENT
-            "withdraw" -> TransactionType.WITHDRAWAL
-            "check_balance" -> TransactionType.BALANCE
-            else -> TransactionType.OTHER
-        }
-
-        val result = SmartFlowResult(
-            amount = if (amount.startsWith("KES") || amount.startsWith("$")) amount else "KES $amount",
-            recipient = recipient,
-            phoneNumber = flowData["phone"],
-            mpesaCode = code,
-            timestamp = System.currentTimeMillis(),
-            type = type,
-            summary = response.body.ifBlank { response.title },
-            rawResponse = response.rawText
-        )
-        onComplete?.invoke(result)
-    }
-
-    private fun needsUserInput(response: ParsedUssdResponse): Boolean {
-        val text = response.rawText.lowercase()
-        val inputKeywords = listOf(
-            "enter", "input", "type", "provide",
-            "phone number", "amount", "pin", "password",
-            "business number", "till number", "account number", "meter"
-        )
-        return response.inputType != UssdInputType.NONE || inputKeywords.any { text.contains(it) }
     }
 
     private fun processUserInputStep(response: ParsedUssdResponse) {
-        val text = response.rawText.lowercase()
+        val detected = detectInputType(response)
+        val msg = "⚠️ Please enter $detected:"
+        _statusMessage.value = msg
+        onStatusUpdate?.invoke(msg)
 
-        // If asking for phone number and we already have it collected
-        if ((text.contains("phone") || text.contains("number") || response.inputType == UssdInputType.PHONE_NUMBER) &&
-            !text.contains("pin")
-        ) {
-            val phone = flowData["phone"]
-            if (!phone.isNullOrBlank()) {
-                val status = "📱 Auto-entering phone: $phone"
-                _statusMessage.value = status
-                onStatusUpdate?.invoke(status)
-                scope.launch {
-                    delay(500)
-                    UssdSessionManager.submitStepResponse(phone)
-                }
-                return
-            }
-        }
-
-        // If asking for amount and we already have it collected
-        if ((text.contains("amount") || text.contains("kes") || response.inputType == UssdInputType.AMOUNT) &&
-            !text.contains("pin")
-        ) {
-            val amount = flowData["amount"]
-            if (!amount.isNullOrBlank()) {
-                val status = "💰 Auto-entering amount: KES $amount"
-                _statusMessage.value = status
-                onStatusUpdate?.invoke(status)
-                scope.launch {
-                    delay(500)
-                    UssdSessionManager.submitStepResponse(amount)
-                }
-                return
-            }
-        }
-
-        // If asking for PIN and we already have it
-        if (text.contains("pin") || response.inputType == UssdInputType.PIN) {
-            val pin = flowData["pin"]
-            if (!pin.isNullOrBlank()) {
-                val status = "🔐 Entering secret PIN..."
-                _statusMessage.value = status
-                onStatusUpdate?.invoke(status)
-                scope.launch {
-                    delay(500)
-                    UssdSessionManager.submitStepResponse(pin)
-                }
-                return
-            }
-        }
-
-        // Otherwise request input from the user
-        requestUserInput(response)
+        val data = mapOf(
+            "type" to detected,
+            "hint" to response.inputHint.ifBlank { "Enter value" },
+            "response" to response
+        )
+        _isWaitingForInput.value = true
+        onInputRequired?.invoke(data)
     }
 
     private fun requestUserInput(response: ParsedUssdResponse) {
@@ -286,13 +155,72 @@ class SmartUssdFlowEngine {
         }
     }
 
-    private fun showOptionsToUser(response: ParsedUssdResponse) {
-        val data = mapOf(
+    private fun showOptionsToUser(response: ParsedUssdResponse, suggestedOption: UssdMenuOption? = null) {
+        val data = mutableMapOf<String, Any>(
             "type" to "menu",
             "options" to response.options,
             "response" to response
         )
+        if (suggestedOption != null) {
+            data["suggestedOption"] = suggestedOption
+        }
+        _isWaitingForInput.value = true
         onInputRequired?.invoke(data)
+    }
+
+    private fun isGoalReached(response: ParsedUssdResponse, goal: String): Boolean {
+        if (response.isTerminal) return true
+        if (goal.isBlank()) return false
+        val text = response.rawText.lowercase()
+        return when (goal) {
+            "check_balance" -> response.isBalance || text.contains("balance")
+            "send_money" -> text.contains("sent") || text.contains("confirmed") || (response.amount != null && response.recipient != null)
+            "buy_airtime" -> text.contains("airtime") && (text.contains("successful") || text.contains("bought"))
+            else -> response.isTerminal || response.type == UssdResponseType.SUCCESS_RESULT
+        }
+    }
+
+    private fun handleGoalReached(response: ParsedUssdResponse, goal: String) {
+        val result = SmartFlowResult(
+            amount = response.amount ?: response.balance ?: "",
+            recipient = response.recipient,
+            phoneNumber = null,
+            mpesaCode = response.transactionId,
+            timestamp = System.currentTimeMillis(),
+            type = when (goal) {
+                "check_balance" -> TransactionType.BALANCE
+                "send_money" -> TransactionType.SENT
+                "buy_airtime" -> TransactionType.AIRTIME
+                "pay_bill" -> TransactionType.BILL_PAYMENT
+                "withdraw" -> TransactionType.WITHDRAWAL
+                else -> TransactionType.OTHER
+            },
+            summary = response.body.ifBlank { response.title },
+            rawResponse = response.rawText
+        )
+        val msg = "✅ Completed: ${response.title.ifBlank { "Flow finished" }}"
+        _statusMessage.value = msg
+        onStatusUpdate?.invoke(msg)
+        onComplete?.invoke(result)
+        isEngineActive = false
+        _isWaitingForInput.value = false
+    }
+
+    private fun needsUserInput(response: ParsedUssdResponse): Boolean {
+        if (response.isPinRequest || response.inputType != UssdInputType.NONE) return true
+        val text = response.rawText.lowercase()
+        return text.contains("enter") || text.contains("pin") || text.contains("amount") || text.contains("number") || text.contains("weka")
+    }
+
+    private fun findOptionForGoal(options: List<UssdMenuOption>, goal: String): UssdMenuOption? {
+        val keywords = GOAL_KEYWORDS[goal] ?: listOf(goal)
+        for (option in options) {
+            val labelLower = option.label.lowercase()
+            if (keywords.any { labelLower.contains(it) }) {
+                return option
+            }
+        }
+        return null
     }
 
     fun submitUserInput(input: String) {

@@ -60,9 +60,9 @@ import com.example.ui.theme.TealPrimary
 import com.example.ui.viewmodel.CodeeViewModel
 
 enum class CodeeTab(val title: String, val icon: ImageVector) {
-    HOME("Dialpad", Icons.Default.Dialpad),
     ROUTINES("Workflows", Icons.Default.Bolt),
     SIMULATOR("Simulator", Icons.Default.Terminal),
+    HOME("Dialpad", Icons.Default.Dialpad),
     HISTORY("History", Icons.Default.History),
     TRUST("Security", Icons.Default.Shield)
 }
@@ -130,6 +130,7 @@ fun CodeeAppContent(
     val selectedSimSlot by viewModel.selectedSimSlot.collectAsState()
     val isDemoMode by viewModel.isDemoMode.collectAsState()
     val favoriteCodeIds by viewModel.favoriteCodeIds.collectAsState()
+    val dialerMode by viewModel.selectedDialerMode.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -152,27 +153,49 @@ fun CodeeAppContent(
             ) {
                 CodeeTab.values().forEach { tab ->
                     val isSelected = selectedTab == tab
+                    val isCenterDialpad = tab == CodeeTab.HOME
+
                     NavigationBarItem(
                         selected = isSelected,
                         onClick = { selectedTab = tab },
                         icon = {
-                            Icon(
-                                imageVector = tab.icon,
-                                contentDescription = tab.title,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            if (isCenterDialpad) {
+                                androidx.compose.material3.Surface(
+                                    shape = androidx.compose.foundation.shape.CircleShape,
+                                    color = if (isSelected) TealPrimary else TealPrimary.copy(alpha = 0.14f),
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    androidx.compose.foundation.layout.Box(
+                                        contentAlignment = androidx.compose.ui.Alignment.Center,
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.title,
+                                            tint = if (isSelected) Color.White else TealPrimary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = tab.icon,
+                                    contentDescription = tab.title,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         },
                         label = {
                             Text(
                                 text = tab.title,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                fontWeight = if (isSelected || isCenterDialpad) FontWeight.Bold else FontWeight.Normal
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = TealPrimary,
                             selectedTextColor = TealPrimary,
-                            indicatorColor = TealPrimary.copy(alpha = 0.12f)
+                            indicatorColor = if (isCenterDialpad) Color.Transparent else TealPrimary.copy(alpha = 0.12f)
                         ),
                         modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
                     )
@@ -202,6 +225,8 @@ fun CodeeAppContent(
                     onSelectSimSlot = { viewModel.setSimSlot(it) },
                     isDemoMode = isDemoMode,
                     onToggleDemoMode = { viewModel.toggleDemoMode() },
+                    dialerMode = dialerMode,
+                    onSelectDialerMode = { viewModel.setDialerMode(it) },
                     savedRoutines = savedRoutines,
                     onRunRoutine = { routine ->
                         val autoSteps = if (routine.stepsCsv.isNotBlank()) {
@@ -221,6 +246,8 @@ fun CodeeAppContent(
                     permissionStatus = permissionStatus,
                     onOpenPermissionWizard = { showPermissionWizard = true },
                     onCreateRoutineClick = { showCreateRoutineDialog = true },
+                    recentHistory = historyItems,
+                    onNavigateToHistory = { selectedTab = CodeeTab.HISTORY },
                     modifier = Modifier.padding(innerPadding)
                 )
             }
@@ -266,6 +293,8 @@ fun CodeeAppContent(
             CodeeTab.TRUST -> {
                 TrustCenterScreen(
                     status = permissionStatus,
+                    dialerMode = dialerMode,
+                    onSelectDialerMode = { viewModel.setDialerMode(it) },
                     onRefreshPermissions = { viewModel.refreshPermissions() },
                     onRequestPhonePermissions = onRequestPhonePermissions,
                     modifier = Modifier.padding(innerPadding)
