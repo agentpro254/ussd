@@ -820,7 +820,7 @@ private fun InputPromptView(
                 .testTag("submit_step_btn")
         ) {
             Icon(
-                imageVector = Icons.Default.Send,
+                imageVector = Icons.AutoMirrored.Filled.Send,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp)
             )
@@ -1322,7 +1322,7 @@ fun TransactionConfirmationCardLayout(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Send,
+                        imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = null,
                         tint = accentColor,
                         modifier = Modifier.size(15.dp)
