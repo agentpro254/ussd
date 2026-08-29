@@ -291,8 +291,8 @@ object UssdParser {
             if (matcher.find()) {
                 val key = matcher.group(1)?.trim() ?: ""
                 val label = matcher.group(2)?.trim() ?: ""
-                val isBack = key == "0" || key == "00" || label.contains("back", ignoreCase = true) || label.contains("cancel", ignoreCase = true)
-                val isNext = key == "*" || key == "#" || label.contains("next", ignoreCase = true) || label.contains("more", ignoreCase = true)
+                val isBack = NavigationDetector.isBackOption(label.lowercase(), key)
+                val isNext = NavigationDetector.isNextOption(label.lowercase(), key)
                 options.add(
                     UssdMenuOption(
                         id = key,

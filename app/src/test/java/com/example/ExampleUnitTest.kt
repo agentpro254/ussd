@@ -70,4 +70,30 @@ class ExampleUnitTest {
         assertEquals(UssdResponseType.CONFIRMATION, parsed.type)
         assertEquals(2, parsed.options.size)
     }
+
+    @Test
+    fun testNavigationDetector() {
+        val rawUssd = """
+            CON M-PESA Menu
+            1. Send Money
+            2. Withdraw Cash
+            3. Buy Airtime
+            98. Back
+            99. Next
+            0. Main Menu
+        """.trimIndent()
+
+        val parsed = UssdParser.parse(rawUssd)
+        val nav = com.example.data.parser.NavigationDetector.detectNavigationOptions(parsed.options)
+
+        assertEquals(3, nav.regularOptions.size)
+        assertEquals("Send Money", nav.regularOptions[0].label)
+        assertEquals("Withdraw Cash", nav.regularOptions[1].label)
+        assertEquals("Buy Airtime", nav.regularOptions[2].label)
+
+        assertTrue(nav.hasNavigation)
+        assertEquals("98", nav.back?.id)
+        assertEquals("99", nav.next?.id)
+        assertEquals("0", nav.main?.id)
+    }
 }

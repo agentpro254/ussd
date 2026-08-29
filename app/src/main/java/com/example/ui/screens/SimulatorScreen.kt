@@ -73,6 +73,7 @@ import com.example.data.model.PreloadedUssdRepository
 import com.example.data.model.SimCardInfo
 import com.example.data.model.UssdCodeItem
 import com.example.data.parser.UssdParser
+import com.example.ui.components.LiveUssdMenuCardLayout
 import com.example.ui.components.SimSelectionBottomSheet
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.EmeraldSuccessBg
@@ -652,43 +653,21 @@ fun SimulatorScreen(
                 }
 
                 if (parsedPreview.options.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        parsedPreview.options.forEach { opt ->
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(22.dp)
-                                            .clip(CircleShape)
-                                            .background(TealPrimary),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = opt.id,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                    }
-                                    Text(
-                                        text = opt.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Interactive Rendered Menu:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LiveUssdMenuCardLayout(
+                        options = parsedPreview.options,
+                        onSelectOption = { selectedId ->
+                            // Update sample input to show selected state or next step
+                            customRawInput = "CON Option $selectedId Selected:\n1. Confirm Selection\n98. Back\n0. Main Menu"
                         }
-                    }
+                    )
                 }
             }
         }

@@ -147,9 +147,23 @@ object UssdSessionManager {
                     historySteps = currentStepLogs.toList(),
                     isSimulation = true,
                     simSlot = simSlot,
-                    isAutomating = false,
-                    pendingInputs = emptyList()
+                    isAutomating = automatedSteps.isNotEmpty(),
+                    pendingInputs = automatedSteps
                 )
+
+                // If automated steps are supplied, execute them sequentially
+                if (automatedSteps.isNotEmpty()) {
+                    scope.launch {
+                        for ((idx, stepInput) in automatedSteps.withIndex()) {
+                            kotlinx.coroutines.delay(650)
+                            if (_sessionState.value !is UssdSessionState.ActiveSession) {
+                                break
+                            }
+                            submitStepResponse(stepInput)
+                            kotlinx.coroutines.delay(650)
+                        }
+                    }
+                }
             }
         }
     }
@@ -157,31 +171,31 @@ object UssdSessionManager {
     private fun generateInitialCarrierResponse(code: String): String {
         return when {
             code == "*334#" || code.startsWith("*334") -> {
-                "M-PESA Main Menu\n1. Send Money\n2. Withdraw Cash\n3. Buy Airtime\n4. Pay Bill\n5. Lipa Na M-PESA\n6. My Account\n7. Fuliza M-PESA\n8. M-Shwari"
+                "M-PESA Main Menu (Page 1/2)\n1. Send Money\n2. Withdraw Cash\n3. Buy Airtime\n4. Pay Bill\n5. Lipa Na M-PESA\n6. My Account\n99. Next\n0. Exit"
             }
             code == "*144#" || code.startsWith("*144") -> {
                 "Airtime Balance: Your main account balance is KES 420.50. Valid until 15/09/2026. Free 50 SMS available."
             }
             code == "*544#" || code.startsWith("*544") -> {
-                "Safaricom Tunukiwa & Data:\n1. 1.5GB 3hr @ Ksh 50\n2. 2.5GB 24hr @ Ksh 100\n3. 10GB 30days @ Ksh 1000\n4. Check Data Balance\n0. Exit"
+                "Safaricom Tunukiwa & Data:\n1. 1.5GB 3hr @ Ksh 50\n2. 2.5GB 24hr @ Ksh 100\n3. 10GB 30days @ Ksh 1000\n4. Check Data Balance\n99. Next\n0. Exit"
             }
             code == "*141#" || code == "*185#" || code.startsWith("*185") -> {
-                "Airtel Money & Self-Care:\n1. Send Money\n2. Buy Airtime\n3. Withdraw Cash\n4. Pay Bills & Utilities\n5. My Account & Balance\n0. Exit"
+                "Airtel Money & Self-Care:\n1. Send Money\n2. Buy Airtime\n3. Withdraw Cash\n4. Pay Bills & Utilities\n5. My Account & Balance\n99. Next\n0. Exit"
             }
             code == "*123#" || code.startsWith("*123") -> {
                 "Telkom Kenya Selfcare:\n1. Check Balance\n2. Top Up Airtime\n3. Buy Data Bundles\n4. T-Kash Mobile Money\n0. Exit"
             }
             code == "*247#" || code.startsWith("*247") -> {
-                "Equity Eazzy 247:\n1. Send Money\n2. Withdraw Cash\n3. Check Balance\n4. Mini Statement\n5. Loans & EquiLoan\n0. Exit"
+                "Equity Eazzy 247:\n1. Send Money\n2. Withdraw Cash\n3. Check Balance\n4. Mini Statement\n5. Loans & EquiLoan\n99. Next\n0. Exit"
             }
             code == "*522#" || code.startsWith("*522") -> {
-                "KCB Banking:\n1. Funds Transfer\n2. Balance Enquiry\n3. Mini Statement\n4. KCB M-PESA Loan\n0. Exit"
+                "KCB Banking:\n1. Funds Transfer\n2. Balance Enquiry\n3. Mini Statement\n4. KCB M-PESA Loan\n98. Back\n0. Exit"
             }
             code == "*667#" || code.startsWith("*667") -> {
-                "Co-op Bank MCo-op Cash:\n1. Send Money\n2. Account Balance\n3. Mini Statement\n4. Pay Bill\n0. Exit"
+                "Co-op Bank MCo-op Cash:\n1. Send Money\n2. Account Balance\n3. Mini Statement\n4. Pay Bill\n98. Back\n0. Exit"
             }
             else -> {
-                "Carrier USSD Service ($code):\n1. Check Account Status\n2. Top Up / Recharge\n3. Active Subscriptions\n4. Customer Support\n0. Exit"
+                "Carrier USSD Service ($code):\n1. Check Account Status\n2. Top Up / Recharge\n3. Active Subscriptions\n4. Customer Support\n98. Back\n0. Exit"
             }
         }
     }
@@ -379,6 +393,26 @@ object UssdSessionManager {
         lastInput: String,
         logs: List<StepLogItem>
     ): String {
+        // Universal Smart Navigation Intercepts
+        if (lastInput == "0" && (logs.lastOrNull()?.promptText?.contains("Exit", ignoreCase = true) == true || stepIndex == 2)) {
+            return "Session terminated by user. Thank you for using Codee USSD Selfcare."
+        }
+        if (lastInput == "0" || lastInput.contains("main", ignoreCase = true)) {
+            return generateInitialCarrierResponse(code)
+        }
+        if (lastInput == "98" || lastInput.contains("back", ignoreCase = true) || lastInput.contains("rudi", ignoreCase = true)) {
+            return generateInitialCarrierResponse(code)
+        }
+        if (lastInput == "99" || lastInput.contains("next", ignoreCase = true) || lastInput.contains("mbele", ignoreCase = true)) {
+            if (code.contains("334") || code == "*334#") {
+                return "M-PESA Menu (Page 2/2)\n7. Fuliza M-PESA\n8. M-Shwari & KCB M-PESA\n9. Global Pay (Virtual Visa)\n10. Halal M-PESA\n98. Back\n0. Main Menu"
+            } else if (code.contains("544")) {
+                return "Safaricom Data & Packs (Page 2/2)\n5. Monthly 25GB @ Ksh 2000\n6. YouTube & Social Packs\n7. PostPay Unlimited\n98. Back\n0. Main Menu"
+            } else {
+                return "Additional Services (Page 2/2):\n5. Statements & Reports\n6. Tariff & Roaming Plans\n7. Security & Pin Settings\n98. Back\n0. Main Menu"
+            }
+        }
+
         val firstInput = logs.firstOrNull()?.userInput ?: lastInput
 
         if (code.contains("334") || code == "*334#") {
@@ -401,7 +435,7 @@ object UssdSessionManager {
                 }
             } else if (firstInput == "3" || firstInput.contains("airtime", ignoreCase = true)) {
                 return when (stepIndex) {
-                    2 -> "Buy Airtime for:\n1. My Phone\n2. Other Phone"
+                    2 -> "Buy Airtime for:\n1. My Phone\n2. Other Phone\n98. Back"
                     3 -> "Enter Amount in KES:"
                     4 -> "Enter 4-digit M-PESA PIN:"
                     else -> "AIR441920 Confirmed. Ksh 200.00 airtime purchased successfully on 28/8/26 at 2:23 PM. Balance Ksh 29,010.00."
@@ -416,7 +450,7 @@ object UssdSessionManager {
                 }
             } else if (firstInput == "5" || firstInput.contains("lipa", ignoreCase = true)) {
                 return when (stepIndex) {
-                    2 -> "1. Buy Goods and Services (Till)\n2. Pochi La Biashara"
+                    2 -> "1. Buy Goods and Services (Till)\n2. Pochi La Biashara\n98. Back"
                     3 -> "Enter Till / Merchant Number:"
                     4 -> "Enter Amount in KES:"
                     5 -> "Enter 4-digit M-PESA PIN:"
@@ -424,9 +458,21 @@ object UssdSessionManager {
                 }
             } else if (firstInput == "6" || firstInput.contains("account", ignoreCase = true) || firstInput.contains("balance", ignoreCase = true)) {
                 return when (stepIndex) {
-                    2 -> "My Account:\n1. Check Balance\n2. Mini Statement\n3. Change PIN\n4. Reset PIN"
+                    2 -> "My Account:\n1. Check Balance\n2. Mini Statement\n3. Change PIN\n4. Reset PIN\n98. Back\n0. Main Menu"
                     3 -> "Enter 4-digit M-PESA PIN to view balance:"
                     else -> "M-PESA Balance: Your balance is Ksh 15,250.00. Available Fuliza Limit is Ksh 12,000.00. Transacted securely via Codee."
+                }
+            } else if (firstInput == "7" || firstInput.contains("fuliza", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "Fuliza M-PESA:\n1. Opt In\n2. Check Limit & Balance\n3. Mini Statement\n98. Back\n0. Main Menu"
+                    3 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "Fuliza M-PESA Limit: Available limit is Ksh 12,000.00. Outstanding balance Ksh 0.00."
+                }
+            } else if (firstInput == "8" || firstInput.contains("shwari", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "M-Shwari Services:\n1. Send to M-Shwari\n2. Withdraw from M-Shwari\n3. Lock Savings Account\n4. Loan Request\n98. Back\n0. Main Menu"
+                    3 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "M-Shwari Balance: Savings account balance is Ksh 8,450.00. Available loan limit is Ksh 15,000.00."
                 }
             }
         }
