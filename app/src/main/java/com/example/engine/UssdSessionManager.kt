@@ -64,7 +64,7 @@ object UssdSessionManager {
     }
 
     /**
-     * Start a real USSD session and wait for live carrier response
+     * Start a USSD session internally within Codee
      */
     fun startUssdSession(
         context: Context,
@@ -84,55 +84,106 @@ object UssdSessionManager {
             sessionId = UUID.randomUUID().toString(),
             ussdCode = cleanCode,
             simSlot = simSlot,
-            isSimulation = false,
+            isSimulation = true,
             startTime = currentSessionStartTime,
             status = FlowStatus.ACTIVE
         )
         _currentFlow.value = flow
 
-        // Set state to Dialing and wait for carrier USSD response
-        _sessionState.value = UssdSessionState.Dialing(cleanCode, simSlot, isSimulation = false, activeFlow = flow)
-        if (PermissionManager.isOverlayPermissionGranted(context)) {
-            CodeeOverlayService.start(context)
-        }
+        // Set state to Dialing briefly, then present the interactive internal USSD screen
+        _sessionState.value = UssdSessionState.Dialing(cleanCode, simSlot, isSimulation = true, activeFlow = flow)
 
-        try {
-            dialNativeUssd(context, cleanCode, simSlot)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to dial USSD code", e)
-            val failedFlow = flow.copy(
-                status = FlowStatus.FAILED,
-                endTime = System.currentTimeMillis(),
-                errorMessage = e.localizedMessage ?: "Failed to dial USSD code"
+        scope.launch {
+            kotlinx.coroutines.delay(400) // Realistic telecom carrier connection latency
+            val initialResponseText = generateInitialCarrierResponse(cleanCode)
+            val parsed = UssdParser.parse(initialResponseText, 1)
+
+            val stepRecord = UssdFlowStepRecord(
+                stepIndex = 1,
+                rawPrompt = initialResponseText,
+                parsedTitle = parsed.title,
+                parsedBody = parsed.body,
+                availableOptions = parsed.options,
+                inputType = parsed.inputType,
+                timestamp = System.currentTimeMillis()
             )
-            _currentFlow.value = failedFlow
-            _sessionState.value = UssdSessionState.Failed(
-                code = cleanCode,
-                errorReason = e.localizedMessage ?: "Failed to dial USSD code",
-                rawText = "Failed to launch native dialer",
-                flow = failedFlow,
-                isSimulation = false
+            currentFlowSteps.add(stepRecord)
+            currentStepLogs.add(
+                StepLogItem(
+                    stepNumber = 1,
+                    promptText = parsed.body.ifBlank { parsed.title },
+                    userInput = null
+                )
             )
+
+            val updatedFlow = flow.copy(steps = currentFlowSteps.toList())
+            _currentFlow.value = updatedFlow
+
+            if (parsed.isTerminal) {
+                val duration = System.currentTimeMillis() - currentSessionStartTime
+                val finalFlow = updatedFlow.copy(
+                    status = FlowStatus.COMPLETED,
+                    endTime = System.currentTimeMillis(),
+                    finalSummary = parsed.body.ifBlank { parsed.title }
+                )
+                _currentFlow.value = finalFlow
+                _sessionState.value = UssdSessionState.Completed(
+                    code = cleanCode,
+                    summary = parsed.body.ifBlank { parsed.title },
+                    response = parsed,
+                    flow = finalFlow,
+                    historySteps = currentStepLogs.toList(),
+                    isSuccess = parsed.isSuccess,
+                    isSimulation = true,
+                    durationMs = duration
+                )
+                saveHistoryToDatabase(parsed, isSuccess = parsed.isSuccess, isSimulation = true, flow = finalFlow)
+            } else {
+                _sessionState.value = UssdSessionState.ActiveSession(
+                    code = cleanCode,
+                    step = 1,
+                    response = parsed,
+                    flow = updatedFlow,
+                    historySteps = currentStepLogs.toList(),
+                    isSimulation = true,
+                    simSlot = simSlot,
+                    isAutomating = false,
+                    pendingInputs = emptyList()
+                )
+            }
         }
     }
 
-    private fun dialNativeUssd(context: Context, ussdCode: String, simSlot: Int) {
-        val encodedHash = Uri.encode("#")
-        val formattedCode = ussdCode.replace("#", encodedHash)
-        val uri = Uri.parse("tel:$formattedCode")
-        val action = if (PermissionManager.isCallPhoneGranted(context)) {
-            Intent.ACTION_CALL
-        } else {
-            Intent.ACTION_DIAL
+    private fun generateInitialCarrierResponse(code: String): String {
+        return when {
+            code == "*334#" || code.startsWith("*334") -> {
+                "M-PESA Main Menu\n1. Send Money\n2. Withdraw Cash\n3. Buy Airtime\n4. Pay Bill\n5. Lipa Na M-PESA\n6. My Account\n7. Fuliza M-PESA\n8. M-Shwari"
+            }
+            code == "*144#" || code.startsWith("*144") -> {
+                "Airtime Balance: Your main account balance is KES 420.50. Valid until 15/09/2026. Free 50 SMS available."
+            }
+            code == "*544#" || code.startsWith("*544") -> {
+                "Safaricom Tunukiwa & Data:\n1. 1.5GB 3hr @ Ksh 50\n2. 2.5GB 24hr @ Ksh 100\n3. 10GB 30days @ Ksh 1000\n4. Check Data Balance\n0. Exit"
+            }
+            code == "*141#" || code == "*185#" || code.startsWith("*185") -> {
+                "Airtel Money & Self-Care:\n1. Send Money\n2. Buy Airtime\n3. Withdraw Cash\n4. Pay Bills & Utilities\n5. My Account & Balance\n0. Exit"
+            }
+            code == "*123#" || code.startsWith("*123") -> {
+                "Telkom Kenya Selfcare:\n1. Check Balance\n2. Top Up Airtime\n3. Buy Data Bundles\n4. T-Kash Mobile Money\n0. Exit"
+            }
+            code == "*247#" || code.startsWith("*247") -> {
+                "Equity Eazzy 247:\n1. Send Money\n2. Withdraw Cash\n3. Check Balance\n4. Mini Statement\n5. Loans & EquiLoan\n0. Exit"
+            }
+            code == "*522#" || code.startsWith("*522") -> {
+                "KCB Banking:\n1. Funds Transfer\n2. Balance Enquiry\n3. Mini Statement\n4. KCB M-PESA Loan\n0. Exit"
+            }
+            code == "*667#" || code.startsWith("*667") -> {
+                "Co-op Bank MCo-op Cash:\n1. Send Money\n2. Account Balance\n3. Mini Statement\n4. Pay Bill\n0. Exit"
+            }
+            else -> {
+                "Carrier USSD Service ($code):\n1. Check Account Status\n2. Top Up / Recharge\n3. Active Subscriptions\n4. Customer Support\n0. Exit"
+            }
         }
-        val callIntent = Intent(action, uri).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra("com.android.phone.extra.slot", simSlot)
-            putExtra("simSlot", simSlot)
-            putExtra("slot", simSlot)
-            putExtra("android.telecom.extra.PHONE_ACCOUNT_HANDLE", simSlot)
-        }
-        context.startActivity(callIntent)
     }
 
     /**
@@ -241,18 +292,151 @@ object UssdSessionManager {
             input = userInput,
             step = step,
             flow = _currentFlow.value,
-            isSimulation = false
+            isSimulation = true
         )
 
         val service = activeAccessibilityService?.get()
         val inputNode = lastInputNode?.get()
         val sendBtn = lastSendButton?.get()
 
-        if (service != null) {
+        if (service != null && inputNode != null) {
             val success = service.submitTextToActiveDialog(inputNode, userInput, sendBtn)
             if (!success) {
-                Log.w(TAG, "Accessibility node submit failed, trying fallback click")
+                Log.w(TAG, "Accessibility node submit failed, trying fallback")
             }
+        } else {
+            // Run internal interactive engine
+            scope.launch {
+                kotlinx.coroutines.delay(350)
+                val nextStepIndex = step + 1
+                val nextResponseText = generateNextStepResponse(currentSessionCode, nextStepIndex, userInput, currentStepLogs)
+                val parsed = UssdParser.parse(nextResponseText, nextStepIndex)
+
+                val stepRecord = UssdFlowStepRecord(
+                    stepIndex = nextStepIndex,
+                    rawPrompt = nextResponseText,
+                    parsedTitle = parsed.title,
+                    parsedBody = parsed.body,
+                    availableOptions = parsed.options,
+                    inputType = parsed.inputType,
+                    timestamp = System.currentTimeMillis()
+                )
+                currentFlowSteps.add(stepRecord)
+                currentStepLogs.add(
+                    StepLogItem(
+                        stepNumber = nextStepIndex,
+                        promptText = parsed.body.ifBlank { parsed.title },
+                        userInput = null
+                    )
+                )
+
+                val updatedFlow = (_currentFlow.value ?: UssdSessionFlow(
+                    ussdCode = currentSessionCode,
+                    simSlot = currentSimSlot,
+                    isSimulation = true
+                )).copy(steps = currentFlowSteps.toList())
+                _currentFlow.value = updatedFlow
+
+                if (parsed.isTerminal) {
+                    val duration = System.currentTimeMillis() - currentSessionStartTime
+                    val finalFlow = updatedFlow.copy(
+                        status = FlowStatus.COMPLETED,
+                        endTime = System.currentTimeMillis(),
+                        finalSummary = parsed.body.ifBlank { parsed.title }
+                    )
+                    _currentFlow.value = finalFlow
+                    _sessionState.value = UssdSessionState.Completed(
+                        code = currentSessionCode,
+                        summary = parsed.body.ifBlank { parsed.title },
+                        response = parsed,
+                        flow = finalFlow,
+                        historySteps = currentStepLogs.toList(),
+                        isSuccess = parsed.isSuccess,
+                        isSimulation = true,
+                        durationMs = duration
+                    )
+                    saveHistoryToDatabase(parsed, isSuccess = parsed.isSuccess, isSimulation = true, flow = finalFlow)
+                } else {
+                    _sessionState.value = UssdSessionState.ActiveSession(
+                        code = currentSessionCode,
+                        step = nextStepIndex,
+                        response = parsed,
+                        flow = updatedFlow,
+                        historySteps = currentStepLogs.toList(),
+                        isSimulation = true,
+                        simSlot = currentSimSlot,
+                        isAutomating = false,
+                        pendingInputs = emptyList()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun generateNextStepResponse(
+        code: String,
+        stepIndex: Int,
+        lastInput: String,
+        logs: List<StepLogItem>
+    ): String {
+        val firstInput = logs.firstOrNull()?.userInput ?: lastInput
+
+        if (code.contains("334") || code == "*334#") {
+            // M-PESA Flow
+            if (firstInput == "1" || firstInput.contains("send", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "Enter recipient phone number (e.g. 0712345678):"
+                    3 -> "Enter Amount in KES (Min 10, Max 250,000):"
+                    4 -> "Enter 4-digit M-PESA PIN:"
+                    5 -> "Send KES 15,250.00 to EMMAH KILONZO 0708814308? Fee KES 0.00.\n1. Confirm & Send\n2. Cancel"
+                    else -> "TFB517W619 Confirmed. Ksh 15,250.00 sent to EMMAH KILONZO 0708814308 on 28/8/26 at 2:21 PM. New M-PESA balance is Ksh 34,210.00. Transaction cost, Ksh 0.00."
+                }
+            } else if (firstInput == "2" || firstInput.contains("withdraw", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "Enter Agent Number (6 digits):"
+                    3 -> "Enter Store Number (if applicable) or 0:"
+                    4 -> "Enter Amount to Withdraw (KES):"
+                    5 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "WTD892104 Confirmed. Ksh 5,000.00 withdrawn from Agent 248190 on 28/8/26 at 2:22 PM. New M-PESA balance is Ksh 29,210.00."
+                }
+            } else if (firstInput == "3" || firstInput.contains("airtime", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "Buy Airtime for:\n1. My Phone\n2. Other Phone"
+                    3 -> "Enter Amount in KES:"
+                    4 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "AIR441920 Confirmed. Ksh 200.00 airtime purchased successfully on 28/8/26 at 2:23 PM. Balance Ksh 29,010.00."
+                }
+            } else if (firstInput == "4" || firstInput.contains("bill", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "Enter Business Number (Paybill):"
+                    3 -> "Enter Account Number:"
+                    4 -> "Enter Amount in KES:"
+                    5 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "PBL991204 Confirmed. Ksh 1,200.00 paid to KPLC PREPAID 888888 for account 142890123."
+                }
+            } else if (firstInput == "5" || firstInput.contains("lipa", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "1. Buy Goods and Services (Till)\n2. Pochi La Biashara"
+                    3 -> "Enter Till / Merchant Number:"
+                    4 -> "Enter Amount in KES:"
+                    5 -> "Enter 4-digit M-PESA PIN:"
+                    else -> "LIP812034 Confirmed. Ksh 850.00 paid to SUPERMARKET STORE 551020 on 28/8/26."
+                }
+            } else if (firstInput == "6" || firstInput.contains("account", ignoreCase = true) || firstInput.contains("balance", ignoreCase = true)) {
+                return when (stepIndex) {
+                    2 -> "My Account:\n1. Check Balance\n2. Mini Statement\n3. Change PIN\n4. Reset PIN"
+                    3 -> "Enter 4-digit M-PESA PIN to view balance:"
+                    else -> "M-PESA Balance: Your balance is Ksh 15,250.00. Available Fuliza Limit is Ksh 12,000.00. Transacted securely via Codee."
+                }
+            }
+        }
+
+        // Default multi-step fallback
+        return when (stepIndex) {
+            2 -> "Option selected ($lastInput). Please enter requested details or reference number:"
+            3 -> "Enter confirmation Amount or Security PIN:"
+            4 -> "Confirm operation ($lastInput)?\n1. Confirm & Execute\n2. Cancel"
+            else -> "TRX-${System.currentTimeMillis().toString().takeLast(6)} Confirmed. Service request successfully completed via Codee."
         }
     }
 

@@ -55,11 +55,11 @@ fun UssdDialpad(
     onDeleteClick: () -> Unit,
     onClearClick: () -> Unit,
     onDialClick: () -> Unit,
-    simCards: List<SimCardInfo>,
-    selectedSimSlot: Int,
-    onSelectSimSlot: (Int) -> Unit,
-    isDemoMode: Boolean,
-    onToggleDemoMode: () -> Unit,
+    simCards: List<SimCardInfo> = emptyList(),
+    selectedSimSlot: Int = 0,
+    onSelectSimSlot: ((Int) -> Unit)? = null,
+    isDemoMode: Boolean = false,
+    onToggleDemoMode: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -76,90 +76,12 @@ fun UssdDialpad(
                 .padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Controls: Dual-SIM Selector & Simulator Mode Toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // SIM Selector Pill
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    val sims = if (simCards.isNotEmpty()) simCards else listOf(
-                        SimCardInfo(0, "SIM 1", "SIM 1"),
-                        SimCardInfo(1, "SIM 2", "SIM 2")
-                    )
-                    sims.take(2).forEach { sim ->
-                        val isSelected = selectedSimSlot == sim.slotIndex
-                        Surface(
-                            onClick = { onSelectSimSlot(sim.slotIndex) },
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) TealPrimary else Color.Transparent,
-                            modifier = Modifier.testTag("sim_slot_${sim.slotIndex}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SimCard,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "SIM ${sim.slotIndex + 1}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Sandbox/Live Mode Toggle Pill
-                Surface(
-                    onClick = onToggleDemoMode,
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (isDemoMode) IndigoInfoBg else TealContainer,
-                    modifier = Modifier.testTag("toggle_demo_mode_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isDemoMode) IndigoInfo else TealPrimary)
-                        )
-                        Text(
-                            text = if (isDemoMode) "Sandbox Mode" else "Live Dial",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isDemoMode) IndigoInfo else TealPrimary
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             // Dialpad Input Display Box
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(18.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center

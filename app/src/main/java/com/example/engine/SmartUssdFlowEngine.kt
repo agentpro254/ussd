@@ -22,19 +22,41 @@ class SmartUssdFlowEngine {
         private const val TAG = "SmartUssdFlowEngine"
 
         val GOAL_KEYWORDS = mapOf(
-            "send_money" to listOf("send", "send money", "tuma", "send cash", "send funds", "transfer", "p2p"),
-            "withdraw" to listOf("withdraw", "cash", "agent", "withdrawal", "toa", "atm"),
-            "buy_airtime" to listOf("airtime", "buy airtime", "purchase airtime", "bundle", "top up", "recharge", "nunua"),
+            "send_money" to listOf("send money", "send", "tuma", "transfer", "send cash", "send funds", "p2p"),
+            "withdraw" to listOf("withdraw", "withdrawal", "cash", "toa", "agent", "atm"),
+            "buy_airtime" to listOf("airtime", "buy airtime", "top up", "purchase airtime", "bundle", "recharge", "nunua"),
             "pay_bill" to listOf("pay bill", "bill", "paybill", "payment", "lipa bill", "utilities"),
-            "lipa_na_mpesa" to listOf("lipa", "na mpesa", "lipa na mpesa", "till", "pay at", "buy goods", "pochi"),
-            "my_account" to listOf("account", "my account", "balance", "mini statement", "self service"),
+            "lipa_na_mpesa" to listOf("lipa", "na mpesa", "till", "buy goods", "lipa na mpesa", "pay at", "pochi"),
+            "my_account" to listOf("account", "my account", "account management", "self service"),
+            "check_balance" to listOf("balance", "check balance", "my balance", "airtime balance", "mpesa balance", "account balance"),
+            "mini_statement" to listOf("statement", "mini statement", "transactions", "mini"),
+            "change_pin" to listOf("change pin", "pin change", "update pin"),
+            "reset_pin" to listOf("reset pin", "forgot pin", "pin reset"),
             "fuliza" to listOf("fuliza", "overdraft", "credit"),
             "m-shwari" to listOf("m-shwari", "shwari", "savings", "loan"),
             "kcb" to listOf("kcb", "bank", "kcb mpesa"),
-            "poch" to listOf("poch", "biashara", "business"),
-            "check_balance" to listOf("balance", "check balance", "airtime balance", "mpesa balance", "account balance"),
             "data_bundles" to listOf("data", "bundle", "internet", "data bundle", "tunukiwa", "4g", "5g")
         )
+
+        /**
+         * Find option number by keyword in raw USSD response text (e.g. "1. Send Money" -> "1")
+         */
+        fun findOptionByKeyword(response: String, service: String): String? {
+            val keywords = GOAL_KEYWORDS[service] ?: return null
+            val lines = response.split("\n")
+            for (line in lines) {
+                val lineLower = line.lowercase()
+                for (keyword in keywords) {
+                    if (lineLower.contains(keyword.lowercase())) {
+                        val match = Regex("""^\s*(\d+|\*|#)\s*[\.\)\:\>\-]""").find(line)
+                        if (match != null) {
+                            return match.groupValues[1]
+                        }
+                    }
+                }
+            }
+            return null
+        }
     }
 
     private val scope = CoroutineScope(Dispatchers.Main)

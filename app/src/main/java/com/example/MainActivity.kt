@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
@@ -58,11 +59,13 @@ import com.example.ui.screens.TrustCenterScreen
 import com.example.ui.theme.CodeeTheme
 import com.example.ui.theme.TealPrimary
 import com.example.ui.viewmodel.CodeeViewModel
+import com.example.ui.viewmodel.DialerMode
+import com.example.ui.viewmodel.PermissionStatus
 
 enum class CodeeTab(val title: String, val icon: ImageVector) {
-    ROUTINES("Workflows", Icons.Default.Bolt),
-    SIMULATOR("Simulator", Icons.Default.Terminal),
     HOME("Dialpad", Icons.Default.Dialpad),
+    SIMULATOR("Simulate", Icons.Default.Bolt),
+    ROUTINES("Workflows", Icons.Default.PlayArrow),
     HISTORY("History", Icons.Default.History),
     TRUST("Security", Icons.Default.Shield)
 }
@@ -248,6 +251,18 @@ fun CodeeAppContent(
                     onCreateRoutineClick = { showCreateRoutineDialog = true },
                     recentHistory = historyItems,
                     onNavigateToHistory = { selectedTab = CodeeTab.HISTORY },
+                    onNavigateToSimulator = { selectedTab = CodeeTab.SIMULATOR },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
+            CodeeTab.SIMULATOR -> {
+                SimulatorScreen(
+                    onLaunchSimulatedSession = { code ->
+                        viewModel.launchUssd(code = code, forceSim = true)
+                    },
+                    simCards = availableSims,
+                    selectedSimSlot = selectedSimSlot,
+                    onSelectSimSlot = { viewModel.setSimSlot(it) },
                     modifier = Modifier.padding(innerPadding)
                 )
             }
@@ -268,14 +283,6 @@ fun CodeeAppContent(
                     onToggleFavorite = { viewModel.toggleFavorite(it) },
                     onDeleteRoutine = { viewModel.deleteRoutine(it.id) },
                     onCreateNewClick = { showCreateRoutineDialog = true },
-                    modifier = Modifier.padding(innerPadding)
-                )
-            }
-            CodeeTab.SIMULATOR -> {
-                SimulatorScreen(
-                    onLaunchSimulatedSession = { code ->
-                        viewModel.launchUssd(code = code, forceSim = true)
-                    },
                     modifier = Modifier.padding(innerPadding)
                 )
             }

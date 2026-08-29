@@ -231,32 +231,17 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
         code: String = _dialpadText.value,
         simSlot: Int = _selectedSimSlot.value,
         automatedSteps: List<String> = emptyList(),
-        forceSim: Boolean = false
+        forceSim: Boolean = true
     ) {
         if (code.isBlank()) return
         val context = getApplication<Application>()
-
-        if (_selectedDialerMode.value == DialerMode.SYSTEM_DIALER) {
-            // Hand off to Android's system phone dialer
-            try {
-                val encoded = android.net.Uri.encode("#")
-                val formatted = code.replace("#", encoded)
-                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:$formatted")).apply {
-                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                context.startActivity(intent)
-                return
-            } catch (e: Exception) {
-                // Fallback to in-app session
-            }
-        }
 
         UssdSessionManager.startUssdSession(
             context = context,
             rawCode = code,
             simSlot = simSlot,
-            automatedSteps = emptyList(),
-            forceSimulation = false
+            automatedSteps = automatedSteps,
+            forceSimulation = true
         )
     }
 
@@ -275,7 +260,7 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
             ussdCode = code,
             goal = goal,
             simSlot = simSlot,
-            forceSimulation = false
+            forceSimulation = true
         )
     }
 
