@@ -27,50 +27,22 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
 
       - name: Decode Keystore
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
 
-      - name: Build and Sign APK
+      - name: Build APK
         run: |
-          # Try to build with gradle wrapper first
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleRelease
-          else
-            gradle assembleRelease
-          fi
-
-      - name: Sign APK (if not signed by Gradle)
-        run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find . -path "*/build/outputs/apk/release/*.apk" 2>/dev/null | head -1)
-          fi
-          if [ -f "$APK_PATH" ]; then
-            if jarsigner -verify "$APK_PATH" 2>/dev/null; then
-              echo "APK is already signed"
-              cp "$APK_PATH" app-release-signed.apk
-            else
-              echo "APK not signed, signing now..."
-              UNSIGNED_APK=$(find . -path "*/build/outputs/apk/release/*-unsigned.apk" 2>/dev/null | head -1)
-              if [ -z "$UNSIGNED_APK" ]; then
-                UNSIGNED_APK="$APK_PATH"
-              fi
-              jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
-                -keystore keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
-                -keypass ${{ secrets.KEY_PASSWORD }} "$UNSIGNED_APK" \
-                ${{ secrets.KEY_ALIAS }}
-              zipalign -v -p 4 "$UNSIGNED_APK" app-release-signed.apk
-            fi
-          fi
+          gradle assembleRelease
 
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: signed-apk
-          path: app-release-signed.apk
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 7
 
       - name: Create GitHub Release
@@ -78,5 +50,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          files: app-release-signed.apk
+          files: app/build/outputs/apk/release/*.apk
           generate_release_notes: true
