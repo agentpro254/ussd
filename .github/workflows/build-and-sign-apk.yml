@@ -1,0 +1,55 @@
+name: Build and Sign Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Type of build (release/debug)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.jks
+
+      - name: Build and Sign APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
+          jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 \
+            -keystore app/keystore.jks -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
+            -keypass ${{ secrets.KEY_PASSWORD }} app/build/outputs/apk/release/app-release-unsigned.apk \
+            ${{ secrets.KEY_ALIAS }}
+          zipalign -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk app-release.apk
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-apk
+          path: app-release.apk
+          retention-days: 7
+
+      - name: Create GitHub Release
+        if: github.event.inputs.build_type == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: app-release.apk
+          generate_release_notes: true
