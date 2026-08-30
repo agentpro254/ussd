@@ -28,7 +28,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '8.5'
 
       - name: Decode Keystore
         run: |
@@ -52,3 +52,5 @@ jobs:
           tag_name: build-${{ github.run_number }}
           files: app/build/outputs/apk/release/*.apk
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
