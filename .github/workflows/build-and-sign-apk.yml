@@ -1,5 +1,10 @@
 name: Build and Sign Android APK
 
+permissions:
+  contents: write    # Required for creating releases
+  actions: read      # Required for reading workflow status
+  checks: read       # Required for reading check runs
+
 on:
   workflow_dispatch:
     inputs:
@@ -38,19 +43,26 @@ jobs:
         run: |
           gradle assembleRelease
 
+      - name: Rename APK
+        run: |
+          APK_NAME="app-v1.0.0-${{ github.run_number }}.apk"
+          echo "APK_NAME=${APK_NAME}" >> $GITHUB_ENV
+          cp app/build/outputs/apk/release/*.apk "${APK_NAME}"
+
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: signed-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: ${{ env.APK_NAME }}
+          path: ${{ env.APK_NAME }}
           retention-days: 7
 
       - name: Create GitHub Release
-        if: github.event.inputs.build_type == 'release'
+        if: github.event.inputs.build_type == 'release' && success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          files: app/build/outputs/apk/release/*.apk
+          files: ${{ env.APK_NAME }}
           generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
