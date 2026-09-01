@@ -27,6 +27,15 @@ android {
             keyPassword = "android"
             storeType = "PKCS12"
         }
+        
+        // ✅ ADD THIS: Release signing config
+        create("release") {
+            storeFile = file("app/keystore.p12")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            storeType = "PKCS12"
+        }
     }
 
     buildTypes {
@@ -36,11 +45,14 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // ✅ ADD THIS: Use release signing config
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
