@@ -28,9 +28,10 @@ android {
             storeType = "PKCS12"
         }
         
-        // ✅ ADD THIS: Release signing config
+        // ✅ FIXED: Correct keystore path
         create("release") {
-            storeFile = file("app/keystore.p12")
+            // ✅ The build.gradle.kts is in the app/ folder, so keystore.p12 is also in app/
+            storeFile = file("keystore.p12")  // NOT "app/keystore.p12"
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
             keyAlias = System.getenv("KEY_ALIAS") ?: ""
             keyPassword = System.getenv("KEY_PASSWORD") ?: ""
@@ -45,7 +46,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // ✅ ADD THIS: Use release signing config
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
