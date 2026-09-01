@@ -11,7 +11,7 @@ on:
       build_type:
         description: 'Type of build (release/debug)'
         required: true
-        default: 'release'
+        default: 'debug'  # ✅ Changed to debug by default
         type: choice
         options:
           - release
@@ -35,19 +35,37 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Decode Keystore
+      - name: Decode Keystore (Release Only)
+        if: github.event.inputs.build_type == 'release'
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/keystore.p12
 
       - name: Build APK
         run: |
-          gradle assembleRelease
+          if [ "${{ github.event.inputs.build_type }}" == "release" ]; then
+            gradle assembleRelease
+          else
+            gradle assembleDebug
+          fi
+
+      - name: Get APK Name
+        id: get_apk_name
+        run: |
+          if [ "${{ github.event.inputs.build_type }}" == "release" ]; then
+            APK_PATH="app/build/outputs/apk/release/*.apk"
+            APK_NAME="app-v1.0.0-${{ github.run_number }}.apk"
+          else
+            APK_PATH="app/build/outputs/apk/debug/*.apk"
+            APK_NAME="app-debug-v1.0.0-${{ github.run_number }}.apk"
+          fi
+          echo "APK_PATH=${APK_PATH}" >> $GITHUB_OUTPUT
+          echo "APK_NAME=${APK_NAME}" >> $GITHUB_OUTPUT
 
       - name: Rename APK
         run: |
-          APK_NAME="app-v1.0.0-${{ github.run_number }}.apk"
+          APK_NAME="${{ steps.get_apk_name.outputs.APK_NAME }}"
           echo "APK_NAME=${APK_NAME}" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/*.apk "${APK_NAME}"
+          cp ${{ steps.get_apk_name.outputs.APK_PATH }} "${APK_NAME}"
 
       - name: Upload APK as Artifact
         uses: actions/upload-artifact@v4
@@ -56,7 +74,7 @@ jobs:
           path: ${{ env.APK_NAME }}
           retention-days: 7
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (Release Only)
         if: github.event.inputs.build_type == 'release' && success()
         uses: softprops/action-gh-release@v2
         with:
