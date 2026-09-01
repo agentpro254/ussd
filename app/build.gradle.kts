@@ -20,18 +20,9 @@ android {
     }
 
     signingConfigs {
-        getByName("debug") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-            storeType = "PKCS12"
-        }
-        
-        // ✅ FIXED: Correct keystore path
+        // ✅ REMOVE debug config - Gradle handles it automatically
         create("release") {
-            // ✅ The build.gradle.kts is in the app/ folder, so keystore.p12 is also in app/
-            storeFile = file("keystore.p12")  // NOT "app/keystore.p12"
+            storeFile = file("keystore.p12")
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
             keyAlias = System.getenv("KEY_ALIAS") ?: ""
             keyPassword = System.getenv("KEY_PASSWORD") ?: ""
@@ -49,7 +40,7 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
-            signingConfig = signingConfigs.getByName("debug")
+            // ✅ No signingConfig - uses default debug keystore automatically
         }
     }
     
