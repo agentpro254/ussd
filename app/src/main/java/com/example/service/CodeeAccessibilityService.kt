@@ -114,12 +114,20 @@ class CodeeAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString() ?: ""
         val eventType = event.eventType
 
+        val isDialerEvent = DIALER_PACKAGES.contains(pkg) ||
+                pkg.contains("phone", ignoreCase = true) ||
+                pkg.contains("dialer", ignoreCase = true) ||
+                pkg.contains("incall", ignoreCase = true) ||
+                pkg.contains("telecom", ignoreCase = true)
+
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
             eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         ) {
-            if (DIALER_PACKAGES.contains(pkg) || pkg.contains("phone", ignoreCase = true) || pkg.contains("dialer", ignoreCase = true)) {
+            if (isDialerEvent) {
                 Log.d(TAG, "📞 Dialer window event from '$pkg' (type=$eventType)")
+                // [PREVENT POPUP AGAIN]: Bring app to front so user stays inside our app UI
+                bringAppToFront()
             }
         }
 
@@ -160,6 +168,24 @@ class CodeeAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.d(TAG, "Could not inspect all windows: ${e.message}")
+        }
+    }
+
+    /**
+     * Reorders our app to the foreground so it covers any system dialer popup
+     * while leaving the underlying USSD session intact and alive.
+     */
+    fun bringAppToFront() {
+        try {
+            val bringIntent = Intent(this, com.example.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(bringIntent)
+            Log.d(TAG, "📲 Reordered MainActivity to front to cover system dialog")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not bring MainActivity to front: ${e.message}")
         }
     }
 
@@ -253,6 +279,9 @@ class CodeeAccessibilityService : AccessibilityService() {
 
         Log.d(TAG, "📱 USSD Response captured: $text")
 
+        // [BRING APP TO FRONT]: Ensure our custom app covers the system dialog without closing it
+        bringAppToFront()
+
         // Broadcast Intent for system receivers
         try {
             val intent = Intent("USSDRESPONSE").apply {
@@ -282,7 +311,7 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     /**
      * Respond to USSD with user input (e.g., "1", "2", PIN).
-     * Called when user taps an option or submits text.
+     * Automatically injects text into the background system dialog and clicks 'SEND'.
      */
     fun respondToUssd(response: String): Boolean {
         try {
@@ -325,12 +354,14 @@ class CodeeAccessibilityService : AccessibilityService() {
                         val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         Log.d(TAG, "✅ Clicked Send button with response '$response' (success=$clicked)")
                         isProcessing = false
+                        bringAppToFront()
                         return true
                     }
 
                     // If no send button, try clicking input field or submit
                     inputField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     isProcessing = false
+                    bringAppToFront()
                     return true
                 }
 
@@ -340,6 +371,7 @@ class CodeeAccessibilityService : AccessibilityService() {
                     button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     Log.d(TAG, "✅ Clicked button: $response")
                     isProcessing = false
+                    bringAppToFront()
                     return true
                 }
             }
@@ -357,23 +389,13 @@ class CodeeAccessibilityService : AccessibilityService() {
         return respondToUssd(text)
     }
 
+    /**
+     * [DO NOT CLICK CANCEL]: Preserves the background dialog to avoid terminating the carrier session.
+     */
     fun dismissActiveDialog(cancelButton: AccessibilityNodeInfo?): Boolean {
-        return try {
-            if (cancelButton != null) {
-                cancelButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            } else {
-                val root = rootInActiveWindow
-                if (root != null) {
-                    val cancel = findCancelButton(root)
-                    cancel?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                } else {
-                    false
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error dismissing dialog", e)
-            false
-        }
+        Log.d(TAG, "🔒 Preserving system USSD dialog in background (not clicking cancel to keep session alive)")
+        bringAppToFront()
+        return true
     }
 
     private fun findInputField(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {

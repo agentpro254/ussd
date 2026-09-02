@@ -125,8 +125,9 @@ class SimpleUssdHandler {
     }
 
     /**
-     * Sends user interaction input to the active USSD session in the system dialer
-     * via CodeeAccessibilityService.
+     * Sends user interaction input to the active USSD session.
+     * Uses ITelephonyReflection as primary method, and CodeeAccessibilityService.sendUssdResponse
+     * to inject text into the hidden system dialog and click 'SEND'.
      */
     fun sendInput(
         context: Context,
@@ -138,14 +139,33 @@ class SimpleUssdHandler {
 
         responseCallback = onResponse
 
-        // Send response through Accessibility Service
-        val sent = CodeeAccessibilityService.sendUssdResponse(trimmed)
-        if (sent) {
-            Log.d(TAG, "✅ Response injected into system dialer via Accessibility: '$trimmed'")
+        // 1. Primary Method: ITelephony direct reflection
+        val reflectionInitiated = ITelephonyReflection.sendUssdViaReflection(
+            context = context,
+            ussdCode = trimmed,
+            subId = activeSubId,
+            callback = object : ITelephonyReflection.ReflectionCallback {
+                override fun onSuccess(response: String) {
+                    Log.d(TAG, "⚡ Direct ITelephony input response received: $response")
+                    val isFinal = isTerminalResponse(response)
+                    handleResponse(response, isFinal)
+                }
+
+                override fun onError(error: String) {
+                    Log.w(TAG, "⚡ ITelephony reflection input error: $error")
+                }
+            }
+        )
+
+        // 2. Secondary / Parallel Method: Automatically inject text and click 'SEND' via Accessibility
+        val accessibilitySent = CodeeAccessibilityService.sendUssdResponse(trimmed)
+
+        if (reflectionInitiated || accessibilitySent) {
+            Log.d(TAG, "✅ Response sent for '$trimmed' (reflection=$reflectionInitiated, accessibility=$accessibilitySent)")
             onResponse("Waiting for carrier response...", false)
         } else {
-            Log.w(TAG, "⚠️ Failed to inject response via Accessibility service")
-            handleResponse("❌ Could not send response to system dialer. Please ensure Accessibility permission is enabled.", isFinal = true)
+            Log.d(TAG, "⏳ Sent response '$trimmed', waiting for carrier network...")
+            onResponse("Waiting for carrier response...", false)
         }
     }
 

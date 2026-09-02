@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.MainActivity
 
 class TransparentActivity : Activity() {
 
@@ -47,7 +48,17 @@ class TransparentActivity : Activity() {
             }
         }
 
-        // Immediately finish transparent activity to push system caller to background and return to main app
+        // [BRING MY APP TO FRONT]: Immediately reorder MainActivity back to front to cover system dialer popup
+        try {
+            val bringAppIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(bringAppIntent)
+            Log.d(TAG, "📲 Reordered MainActivity to front immediately")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to bring MainActivity to front", e)
+        }
+
         finish()
     }
 }
