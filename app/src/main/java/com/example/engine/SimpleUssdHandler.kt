@@ -75,6 +75,32 @@ class SimpleUssdHandler {
             return
         }
 
+        // 1. First attempt direct ITelephony reflection
+        val reflectionInitiated = ITelephonyReflection.sendUssdViaReflection(
+            context = context,
+            ussdCode = clean,
+            subId = subscriptionId,
+            callback = object : ITelephonyReflection.ReflectionCallback {
+                override fun onSuccess(response: String) {
+                    Log.d(TAG, "⚡ Direct ITelephony response received: $response")
+                    val isFinal = isTerminalResponse(response)
+                    handleResponse(response, isFinal)
+                }
+
+                override fun onError(error: String) {
+                    Log.w(TAG, "⚡ ITelephony reflection error: $error")
+                    // If error or unhandled, let accessibility or timeout handle it
+                }
+            }
+        )
+
+        if (reflectionInitiated) {
+            Log.d(TAG, "⚡ Direct ITelephony reflection executed successfully for $clean")
+            onResponse("Waiting for carrier response...", false)
+            return
+        }
+
+        // 2. Fallback to Hidden Dialing via TransparentActivity + CodeeAccessibilityService
         try {
             Log.d(TAG, "🚀 Initiating hidden dialing via TransparentActivity: $clean (slotIndex=$slotIndex, subId=$subscriptionId)")
             

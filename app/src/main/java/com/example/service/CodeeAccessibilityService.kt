@@ -85,6 +85,7 @@ class CodeeAccessibilityService : AccessibilityService() {
         // Configure the accessibility service to monitor all window and content changes
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                    AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                     AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_CLICKED
@@ -94,24 +95,40 @@ class CodeeAccessibilityService : AccessibilityService() {
             // Leave packageNames null so all OEM dialers are monitored without strict filtering
             packageNames = null
 
-            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            flags = flags or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
 
-            notificationTimeout = 100
+            notificationTimeout = 50
         }
 
         serviceInfo = info
-        Log.d(TAG, "✅ Universal Codee Accessibility Service connected successfully")
+        Log.d(TAG, "✅ Universal Codee Accessibility Service connected with FLAG_RETRIEVE_INTERACTIVE_WINDOWS")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         // Prevent processing if already working on something
         if (isProcessing) return
 
+        val pkg = event.packageName?.toString() ?: ""
+        val eventType = event.eventType
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
+            if (DIALER_PACKAGES.contains(pkg) || pkg.contains("phone", ignoreCase = true) || pkg.contains("dialer", ignoreCase = true)) {
+                Log.d(TAG, "📞 Dialer window event from '$pkg' (type=$eventType)")
+            }
+        }
+
         // 1. Try event source
         val eventSource = event.source
         if (eventSource != null && isUssdDialog(eventSource)) {
             val ussdText = extractUssdText(eventSource)
             if (!ussdText.isNullOrEmpty()) {
+                Log.d(TAG, "Captured USSD from event source in pkg='$pkg'")
                 processUssdResponse(ussdText, eventSource)
                 return
             }
@@ -122,6 +139,7 @@ class CodeeAccessibilityService : AccessibilityService() {
         if (root != null && isUssdDialog(root)) {
             val ussdText = extractUssdText(root)
             if (!ussdText.isNullOrEmpty()) {
+                Log.d(TAG, "Captured USSD from rootInActiveWindow in pkg='${root.packageName}'")
                 processUssdResponse(ussdText, root)
                 return
             }
@@ -134,6 +152,7 @@ class CodeeAccessibilityService : AccessibilityService() {
                 if (isUssdDialog(windowRoot)) {
                     val ussdText = extractUssdText(windowRoot)
                     if (!ussdText.isNullOrEmpty()) {
+                        Log.d(TAG, "Captured USSD from background window in pkg='${windowRoot.packageName}'")
                         processUssdResponse(ussdText, windowRoot)
                         return
                     }
