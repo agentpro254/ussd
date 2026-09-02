@@ -54,6 +54,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.example.engine.SimpleUssdHandler
 import com.example.ui.components.UssdResponseDisplay
 import com.example.ui.theme.EmeraldSuccess
@@ -90,7 +92,17 @@ fun UssdSessionScreen(
     // Immediately launch real USSD request upon screen mount
     LaunchedEffect(code, subscriptionId) {
         isWaiting = true
-        responseText = "Dialing $code on SIM ${simSlotIndex + 1}..."
+        responseText = "Waiting for carrier response..."
+
+        // Launch 30-second fallback timer
+        val timerJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+            kotlinx.coroutines.delay(30000L)
+            if (isWaiting) {
+                isWaiting = false
+                isComplete = true
+                responseText = "Session timed out waiting for carrier response. Please verify mobile reception or try dialing again."
+            }
+        }
 
         handler.dialCode(
             context = context,
@@ -98,8 +110,9 @@ fun UssdSessionScreen(
             subscriptionId = subscriptionId,
             slotIndex = simSlotIndex
         ) { response, isFinal ->
+            timerJob.cancel()
             responseText = response
-            isWaiting = false
+            isWaiting = (response == "Waiting for carrier response...")
             if (isFinal) {
                 isComplete = true
                 onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, response)
@@ -259,7 +272,7 @@ fun UssdSessionScreen(
                             isWaiting = true
                             handler.sendInput(context, input) { nextResponse, isFinal ->
                                 responseText = nextResponse
-                                isWaiting = false
+                                isWaiting = (nextResponse == "Waiting for carrier response...")
                                 if (isFinal) {
                                     isComplete = true
                                     onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)
@@ -298,7 +311,7 @@ fun UssdSessionScreen(
                                 isWaiting = true
                                 handler.sendInput(context, toSend) { nextResponse, isFinal ->
                                     responseText = nextResponse
-                                    isWaiting = false
+                                    isWaiting = (nextResponse == "Waiting for carrier response...")
                                     if (isFinal) {
                                         isComplete = true
                                         onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)
@@ -326,7 +339,7 @@ fun UssdSessionScreen(
                             isWaiting = true
                             handler.sendInput(context, toSend) { nextResponse, isFinal ->
                                 responseText = nextResponse
-                                isWaiting = false
+                                isWaiting = (nextResponse == "Waiting for carrier response...")
                                 if (isFinal) {
                                     isComplete = true
                                     onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)

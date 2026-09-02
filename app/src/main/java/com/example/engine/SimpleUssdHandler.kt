@@ -2,11 +2,12 @@ package com.example.engine
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.telephony.TelephonyManager
+import android.telecom.TelecomManager
+import android.telephony.SubscriptionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.receiver.UssdResponseReceiver
@@ -24,8 +25,8 @@ class SimpleUssdHandler {
     private var activeSubId: Int = -1
 
     /**
-     * Dials a real USSD code using the Android TelephonyManager sendUssdRequest API.
-     * ZERO simulation or fake responses.
+     * Dials a real USSD code exclusively using Intent.ACTION_CALL to launch
+     * the system dialer/carrier interface. CodeeAccessibilityService captures the response.
      */
     fun dialCode(
         context: Context,
@@ -55,7 +56,7 @@ class SimpleUssdHandler {
             handleResponse(response, isFinal || isTerminalResponse(response))
         }
 
-        // Register with Accessibility Service for USSD dialog captures
+        // Register with Accessibility Service for USSD dialog captures from system dialer
         CodeeAccessibilityService.setUssdCallback { response ->
             Log.d(TAG, "♿ Accessibility Service captured USSD: $response")
             val isFinal = isTerminalResponse(response)
@@ -74,68 +75,32 @@ class SimpleUssdHandler {
             return
         }
 
-        val baseTelephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-        if (baseTelephony == null) {
-            handleResponse("❌ Error: Telephony service unavailable on this device.", isFinal = true)
-            return
-        }
-
-        // Create target TelephonyManager for the specific SIM card subscription if available
-        val targetTelephony = if (subscriptionId >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try {
-                baseTelephony.createForSubscriptionId(subscriptionId)
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not create TelephonyManager for subId $subscriptionId: ${e.message}")
-                baseTelephony
+        try {
+            Log.d(TAG, "🚀 Initiating hidden dialing via TransparentActivity: $clean (slotIndex=$slotIndex, subId=$subscriptionId)")
+            
+            val intent = Intent(context, com.example.ui.TransparentActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(com.example.ui.TransparentActivity.EXTRA_USSD_CODE, clean)
+                putExtra(com.example.ui.TransparentActivity.EXTRA_SUBSCRIPTION_ID, subscriptionId)
+                putExtra(com.example.ui.TransparentActivity.EXTRA_SLOT_INDEX, slotIndex)
             }
-        } else {
-            baseTelephony
-        }
 
-        // Execute Real USSD request using TelephonyManager.sendUssdRequest (Android 8.0+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                Log.d(TAG, "🚀 Sending REAL USSD request for $clean via subId=$subscriptionId (SIM ${slotIndex + 1})")
-                targetTelephony.sendUssdRequest(
-                    clean,
-                    object : TelephonyManager.UssdResponseCallback() {
-                        override fun onReceiveUssdResponse(
-                            telephony: TelephonyManager,
-                            request: String,
-                            response: CharSequence
-                        ) {
-                            val text = response.toString().trim()
-                            val isFinal = isTerminalResponse(text)
-                            Log.i(TAG, "✅ Real Carrier USSD Response: $text (isFinal=$isFinal)")
-                            handleResponse(text, isFinal)
-                        }
+            context.startActivity(intent)
 
-                        override fun onReceiveUssdResponseFailed(
-                            telephony: TelephonyManager,
-                            request: String,
-                            failureCode: Int
-                        ) {
-                            val errorMsg = formatUssdFailure(failureCode)
-                            Log.e(TAG, "❌ Real USSD Failure: $errorMsg (code=$failureCode)")
-                            handleResponse(errorMsg, isFinal = true)
-                        }
-                    },
-                    Handler(Looper.getMainLooper())
-                )
-            } catch (e: SecurityException) {
-                Log.e(TAG, "SecurityException sending USSD request", e)
-                handleResponse("❌ Permission error: ${e.message ?: "CALL_PHONE required"}", isFinal = true)
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception sending USSD request", e)
-                handleResponse("❌ USSD Request Error: ${e.message ?: "Carrier unreachable"}", isFinal = true)
-            }
-        } else {
-            handleResponse("❌ Error: Android 8.0+ (API 26) is required for in-app USSD execution.", isFinal = true)
+            // Notify UI immediately that the call is launched and waiting for carrier response
+            onResponse("Waiting for carrier response...", false)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException launching TransparentActivity", e)
+            handleResponse("❌ Permission error: ${e.message ?: "CALL_PHONE required"}", isFinal = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception launching TransparentActivity", e)
+            handleResponse("❌ Failed to initiate call: ${e.message ?: "Unknown error"}", isFinal = true)
         }
     }
 
     /**
-     * Sends user interaction input to the active real USSD session.
+     * Sends user interaction input to the active USSD session in the system dialer
+     * via CodeeAccessibilityService.
      */
     fun sendInput(
         context: Context,
@@ -147,63 +112,14 @@ class SimpleUssdHandler {
 
         responseCallback = onResponse
 
-        // Try Accessibility Service response first
-        if (CodeeAccessibilityService.sendUssdResponse(trimmed)) {
-            Log.d(TAG, "✅ Response sent via Accessibility Service: '$trimmed'")
-            return
-        }
-
-        val baseTelephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-        if (baseTelephony == null) {
-            handleResponse("❌ Error: Telephony service unavailable.", isFinal = true)
-            return
-        }
-
-        val targetTelephony = if (activeSubId >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try {
-                baseTelephony.createForSubscriptionId(activeSubId)
-            } catch (e: Exception) {
-                baseTelephony
-            }
+        // Send response through Accessibility Service
+        val sent = CodeeAccessibilityService.sendUssdResponse(trimmed)
+        if (sent) {
+            Log.d(TAG, "✅ Response injected into system dialer via Accessibility: '$trimmed'")
+            onResponse("Waiting for carrier response...", false)
         } else {
-            baseTelephony
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                Log.d(TAG, "📨 Sending real USSD input response: '$trimmed'")
-                targetTelephony.sendUssdRequest(
-                    trimmed,
-                    object : TelephonyManager.UssdResponseCallback() {
-                        override fun onReceiveUssdResponse(
-                            telephony: TelephonyManager,
-                            request: String,
-                            response: CharSequence
-                        ) {
-                            val text = response.toString().trim()
-                            val isFinal = isTerminalResponse(text)
-                            Log.i(TAG, "✅ Next Real USSD Response: $text (isFinal=$isFinal)")
-                            handleResponse(text, isFinal)
-                        }
-
-                        override fun onReceiveUssdResponseFailed(
-                            telephony: TelephonyManager,
-                            request: String,
-                            failureCode: Int
-                        ) {
-                            val errorMsg = formatUssdFailure(failureCode)
-                            Log.e(TAG, "❌ USSD Input Failure: $errorMsg (code=$failureCode)")
-                            handleResponse(errorMsg, isFinal = true)
-                        }
-                    },
-                    Handler(Looper.getMainLooper())
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception during USSD input transmission", e)
-                handleResponse("❌ Failed to send input: ${e.message ?: "Carrier error"}", isFinal = true)
-            }
-        } else {
-            handleResponse("❌ Error: Unsupported OS version for in-app USSD replies.", isFinal = true)
+            Log.w(TAG, "⚠️ Failed to inject response via Accessibility service")
+            handleResponse("❌ Could not send response to system dialer. Please ensure Accessibility permission is enabled.", isFinal = true)
         }
     }
 
@@ -225,14 +141,6 @@ class SimpleUssdHandler {
         responseCallback = null
         UssdResponseReceiver.onResponse = null
         CodeeAccessibilityService.clearCallbacks()
-    }
-
-    private fun formatUssdFailure(failureCode: Int): String {
-        return when (failureCode) {
-            TelephonyManager.USSD_RETURN_FAILURE -> "❌ Carrier returned a failure (Request rejected or invalid option)."
-            -1 -> "❌ USSD request timed out or carrier network error."
-            else -> "❌ Carrier USSD request failed with error code: $failureCode."
-        }
     }
 
     /**
@@ -272,3 +180,4 @@ class SimpleUssdHandler {
         return true
     }
 }
+

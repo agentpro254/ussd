@@ -34,6 +34,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.TransparentActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleTask" />
+
         <service
             android:name=".service.CodeeAccessibilityService"
             android:exported="true"

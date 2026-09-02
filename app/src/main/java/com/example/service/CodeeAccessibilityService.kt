@@ -107,14 +107,40 @@ class CodeeAccessibilityService : AccessibilityService() {
         // Prevent processing if already working on something
         if (isProcessing) return
 
-        val root = rootInActiveWindow ?: return
+        // 1. Try event source
+        val eventSource = event.source
+        if (eventSource != null && isUssdDialog(eventSource)) {
+            val ussdText = extractUssdText(eventSource)
+            if (!ussdText.isNullOrEmpty()) {
+                processUssdResponse(ussdText, eventSource)
+                return
+            }
+        }
 
-        // Check if this is a USSD dialog
-        if (isUssdDialog(root)) {
+        // 2. Try root in active window
+        val root = rootInActiveWindow
+        if (root != null && isUssdDialog(root)) {
             val ussdText = extractUssdText(root)
             if (!ussdText.isNullOrEmpty()) {
                 processUssdResponse(ussdText, root)
+                return
             }
+        }
+
+        // 3. Search interactive background windows (for hidden dialing strategy)
+        try {
+            for (window in windows) {
+                val windowRoot = window.root ?: continue
+                if (isUssdDialog(windowRoot)) {
+                    val ussdText = extractUssdText(windowRoot)
+                    if (!ussdText.isNullOrEmpty()) {
+                        processUssdResponse(ussdText, windowRoot)
+                        return
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Could not inspect all windows: ${e.message}")
         }
     }
 
@@ -242,49 +268,61 @@ class CodeeAccessibilityService : AccessibilityService() {
     fun respondToUssd(response: String): Boolean {
         try {
             isProcessing = true
-            val root = rootInActiveWindow ?: run {
-                isProcessing = false
-                return false
-            }
-
-            // Find input field
-            val inputField = findInputField(root)
-            if (inputField != null) {
-                // Set text via Accessibility action or text property
-                val args = Bundle().apply {
-                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, response)
-                }
-                val setTextSuccess = inputField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                if (!setTextSuccess) {
-                    try {
-                        inputField.text = response
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not set input field text directly: ${e.message}")
+            
+            // Gather candidate roots: active root first, followed by all interactive window roots
+            val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
+            rootInActiveWindow?.let { candidateRoots.add(it) }
+            try {
+                for (window in windows) {
+                    val wRoot = window.root
+                    if (wRoot != null && !candidateRoots.contains(wRoot)) {
+                        candidateRoots.add(wRoot)
                     }
                 }
+            } catch (e: Exception) {
+                Log.d(TAG, "Error listing windows in respondToUssd: ${e.message}")
+            }
 
-                // Find and click send button
-                val sendButton = findSendButton(root)
-                if (sendButton != null) {
-                    val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.d(TAG, "✅ Clicked Send button with response '$response' (success=$clicked)")
+            for (root in candidateRoots) {
+                // Find input field
+                val inputField = findInputField(root)
+                if (inputField != null) {
+                    // Set text via Accessibility action or text property
+                    val args = Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, response)
+                    }
+                    val setTextSuccess = inputField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    if (!setTextSuccess) {
+                        try {
+                            inputField.text = response
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Could not set input field text directly: ${e.message}")
+                        }
+                    }
+
+                    // Find and click send button
+                    val sendButton = findSendButton(root)
+                    if (sendButton != null) {
+                        val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        Log.d(TAG, "✅ Clicked Send button with response '$response' (success=$clicked)")
+                        isProcessing = false
+                        return true
+                    }
+
+                    // If no send button, try clicking input field or submit
+                    inputField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     isProcessing = false
                     return true
                 }
 
-                // If no send button, try clicking input field or submit
-                inputField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                isProcessing = false
-                return true
-            }
-
-            // Fallback: Try to find clickable buttons with matching text
-            val buttons = findButtonsByText(root, response)
-            for (button in buttons) {
-                button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                Log.d(TAG, "✅ Clicked button: $response")
-                isProcessing = false
-                return true
+                // Fallback: Try to find clickable buttons with matching text
+                val buttons = findButtonsByText(root, response)
+                for (button in buttons) {
+                    button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.d(TAG, "✅ Clicked button: $response")
+                    isProcessing = false
+                    return true
+                }
             }
 
             isProcessing = false

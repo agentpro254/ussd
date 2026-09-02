@@ -793,57 +793,108 @@ fun TransactionDetailModal(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Large Amount
+                    // Large Amount (36.sp ExtraBold)
                     if (parsedSms.amount != null) {
                         Text(
                             text = parsedSms.amount,
                             style = TextStyle(
-                                fontSize = 32.sp,
-                                fontWeight = FontWeight.Black,
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = if (isSent) Color(0xFF00A859) else Color(0xFF1E88E5)
                             )
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
-                    // Detailed Key-Value Rows (Simplified: Amount, Sender/Receiver, Phone, Transaction Code, Date/Time)
-                    Column(
+                    // Large Receiver / Sender Display Name (22.sp Bold)
+                    val displayName = if (isSent) parsedSms.recipient else (parsedSms.sender ?: parsedSms.recipient)
+                    if (!displayName.isNullOrBlank()) {
+                        Text(
+                            text = if (isSent) "Sent to:" else "Received from:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = displayName,
+                            style = TextStyle(
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+
+                    // Phone / Till / Paybill Number (18.sp Medium)
+                    val displayNumber = parsedSms.phoneNumber
+                    if (!displayNumber.isNullOrBlank()) {
+                        val numberLabel = when (parsedSms.type) {
+                            SmsType.MPESA_BILL_PAYMENT -> "🏦 Paybill"
+                            SmsType.MPESA_AIRTIME -> "📱 Phone"
+                            else -> "📱 Phone"
+                        }
+                        Text(
+                            text = "$numberLabel: $displayNumber",
+                            style = TextStyle(
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    // Divider before bottom meta
+                    Spacer(modifier = Modifier.height(6.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Transaction Code + Date & Time at bottom
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (parsedSms.recipient != null) {
-                            ModalDetailRow(
-                                label = if (isSent) "Sent To" else "Recipient",
-                                value = parsedSms.recipient,
-                                onCopy = { onCopy(parsedSms.recipient) }
-                            )
-                        }
-                        if (parsedSms.sender != null) {
-                            ModalDetailRow(
-                                label = "Sender / Source",
-                                value = parsedSms.sender,
-                                onCopy = { onCopy(parsedSms.sender) }
-                            )
-                        }
-                        if (!parsedSms.phoneNumber.isNullOrBlank()) {
-                            ModalDetailRow(
-                                label = "Phone Number",
-                                value = "📱 ${parsedSms.phoneNumber}",
-                                onCopy = { onCopy(parsedSms.phoneNumber) }
-                            )
-                        }
+                        // Transaction Code (Monospace with copy)
                         if (!parsedSms.transactionCode.isNullOrBlank()) {
-                            ModalDetailRow(
-                                label = "Transaction Code",
-                                value = parsedSms.transactionCode,
-                                isCode = true,
-                                onCopy = { onCopy(parsedSms.transactionCode) }
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onCopy(parsedSms.transactionCode) }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "🔑",
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = parsedSms.transactionCode,
+                                    style = TextStyle(
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = TealPrimaryDark
+                                    )
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy code",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.width(1.dp))
                         }
-                        ModalDetailRow(
-                            label = "Date & Time",
-                            value = formatSmsDate(parsedSms.raw.timestamp),
-                            onCopy = { onCopy(formatSmsDate(parsedSms.raw.timestamp)) }
+
+                        // Date & Time
+                        Text(
+                            text = formatSmsDate(parsedSms.raw.timestamp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
