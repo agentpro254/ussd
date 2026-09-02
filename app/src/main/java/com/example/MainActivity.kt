@@ -134,6 +134,13 @@ fun CodeeAppContent(
     val isDemoMode by viewModel.isDemoMode.collectAsState()
     val favoriteCodeIds by viewModel.favoriteCodeIds.collectAsState()
     val dialerMode by viewModel.selectedDialerMode.collectAsState()
+    val requireDialConfirmation by viewModel.requireDialConfirmation.collectAsState()
+    val showConfirmDialog by viewModel.showConfirmDialog.collectAsState()
+    val confirmCode by viewModel.confirmDialogCode.collectAsState()
+    val confirmSimSlot by viewModel.confirmDialogSimSlot.collectAsState()
+    val confirmSteps by viewModel.confirmDialogSteps.collectAsState()
+    val confirmTitle by viewModel.confirmDialogTitle.collectAsState()
+    val confirmIsPinProtected by viewModel.confirmDialogIsPinProtected.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -214,13 +221,13 @@ fun CodeeAppContent(
                     onDialChar = { viewModel.appendDialpadChar(it) },
                     onDialDelete = { viewModel.deleteDialpadChar() },
                     onDialClear = { viewModel.clearDialpad() },
-                    onDialSubmit = { viewModel.launchUssd() },
-                    onInitiateSession = { code, simSlot, sequence, isSimulation ->
-                        viewModel.launchUssd(
+                    onDialSubmit = { viewModel.requestDialCode(title = "Dialpad Call") },
+                    onInitiateSession = { code, simSlot, sequence, _ ->
+                        viewModel.requestDialCode(
                             code = code,
                             simSlot = simSlot,
                             automatedSteps = sequence,
-                            forceSim = isSimulation
+                            title = "USSD Action"
                         )
                     },
                     simCards = availableSims,
@@ -235,10 +242,11 @@ fun CodeeAppContent(
                         val autoSteps = if (routine.stepsCsv.isNotBlank()) {
                             routine.stepsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                         } else emptyList()
-                        viewModel.launchUssd(
+                        viewModel.requestDialCode(
                             code = routine.ussdCode,
                             simSlot = routine.simSlot,
-                            automatedSteps = autoSteps
+                            automatedSteps = autoSteps,
+                            title = routine.title
                         )
                         viewModel.updateRoutineLastUsed(routine)
                     },
@@ -258,7 +266,7 @@ fun CodeeAppContent(
             CodeeTab.SIMULATOR -> {
                 SimulatorScreen(
                     onLaunchSimulatedSession = { code ->
-                        viewModel.launchUssd(code = code, forceSim = true)
+                        viewModel.requestDialCode(code = code, title = "Simulator Test")
                     },
                     simCards = availableSims,
                     selectedSimSlot = selectedSimSlot,
@@ -273,10 +281,11 @@ fun CodeeAppContent(
                         val autoSteps = if (routine.stepsCsv.isNotBlank()) {
                             routine.stepsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                         } else emptyList()
-                        viewModel.launchUssd(
+                        viewModel.requestDialCode(
                             code = routine.ussdCode,
                             simSlot = routine.simSlot,
-                            automatedSteps = autoSteps
+                            automatedSteps = autoSteps,
+                            title = routine.title
                         )
                         viewModel.updateRoutineLastUsed(routine)
                     },
@@ -290,7 +299,7 @@ fun CodeeAppContent(
                 HistoryScreen(
                     historyItems = historyItems,
                     onRerun = { code ->
-                        viewModel.launchUssd(code = code)
+                        viewModel.requestDialCode(code = code, title = "Re-dial History")
                     },
                     onClearAll = { viewModel.clearAllHistory() },
                     onDeleteItem = { viewModel.deleteHistoryItem(it) },
@@ -302,11 +311,28 @@ fun CodeeAppContent(
                     status = permissionStatus,
                     dialerMode = dialerMode,
                     onSelectDialerMode = { viewModel.setDialerMode(it) },
+                    requireDialConfirmation = requireDialConfirmation,
+                    onToggleRequireConfirmation = { viewModel.setRequireDialConfirmation(it) },
+                    onStopAllSessions = { viewModel.stopAllSessions() },
+                    onClearCache = { viewModel.clearCache() },
                     onRefreshPermissions = { viewModel.refreshPermissions() },
                     onRequestPhonePermissions = onRequestPhonePermissions,
                     modifier = Modifier.padding(innerPadding)
                 )
             }
+        }
+
+        // Anti-Loop User Confirmation Dialog
+        if (showConfirmDialog) {
+            com.example.ui.components.ConfirmDialDialog(
+                code = confirmCode,
+                simCards = availableSims,
+                selectedSimSlot = confirmSimSlot,
+                flowTitle = confirmTitle,
+                isPinProtected = confirmIsPinProtected,
+                onConfirm = { viewModel.confirmAndLaunchPendingDial() },
+                onCancel = { viewModel.dismissConfirmDialog() }
+            )
         }
 
         // Active Session Sheet ("Good UI" replacement for USSD)

@@ -1,8 +1,6 @@
 package com.example.engine
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.local.AppDatabase
@@ -14,7 +12,6 @@ import com.example.data.model.UssdFlowStepRecord
 import com.example.data.model.UssdSessionFlow
 import com.example.data.model.UssdSessionState
 import com.example.data.parser.UssdParser
-import com.example.permissions.PermissionManager
 import com.example.service.CodeeAccessibilityService
 import com.example.service.CodeeOverlayService
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +27,11 @@ import java.util.UUID
 object UssdSessionManager {
 
     private const val TAG = "UssdSessionManager"
+    private const val MAX_ATTEMPTS = 3
+    private const val TIMEOUT_DURATION_MS = 30000L
+
     private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val timeoutManager = TimeoutManager()
 
     private val _sessionState = MutableStateFlow<UssdSessionState>(UssdSessionState.Idle)
     val sessionState: StateFlow<UssdSessionState> = _sessionState.asStateFlow()
@@ -49,6 +50,10 @@ object UssdSessionManager {
     private var currentFlowSteps = mutableListOf<UssdFlowStepRecord>()
     private var currentSimSlot: Int = 0
 
+    // Anti-Loop & Concurrency Locks
+    private var isSessionRunning = false
+    private var dialAttempts = 0
+
     private var database: AppDatabase? = null
 
     fun initialize(db: AppDatabase) {
@@ -60,170 +65,170 @@ object UssdSessionManager {
     }
 
     fun isSessionActive(): Boolean {
-        return _sessionState.value !is UssdSessionState.Idle
+        return isSessionRunning || _sessionState.value !is UssdSessionState.Idle
+    }
+
+    fun resetAttemptCounters() {
+        dialAttempts = 0
     }
 
     /**
-     * Start a USSD session internally within Codee
+     * Start an internal USSD session using real carrier network services (no external dialer).
      */
     fun startUssdSession(
         context: Context,
         rawCode: String,
         simSlot: Int = 0,
         automatedSteps: List<String> = emptyList(),
-        forceSimulation: Boolean = false
+        userInitiated: Boolean = true
     ) {
         val cleanCode = rawCode.trim()
+
+        // 1. Guard against non-user-initiated auto-dialing loops
+        if (!userInitiated) {
+            Log.w(TAG, "❌ Blocked auto-dial attempt for $cleanCode. All USSD operations require explicit user interaction.")
+            return
+        }
+
+        // 2. Guard against concurrent session re-entry
+        if (isSessionRunning && _sessionState.value !is UssdSessionState.Idle) {
+            Log.w(TAG, "⚠️ Session already active for $currentSessionCode. Blocked concurrent dial request for $cleanCode.")
+            return
+        }
+
+        // 3. Rate limiting and loop prevention
+        if (dialAttempts >= MAX_ATTEMPTS) {
+            Log.e(TAG, "🛑 Maximum dial attempts ($MAX_ATTEMPTS) reached for $cleanCode. Terminating to prevent infinite loop.")
+            _sessionState.value = UssdSessionState.Completed(
+                code = cleanCode,
+                summary = "Dialing stopped: Maximum dial attempts ($MAX_ATTEMPTS) reached. Please check signal or try manually.",
+                response = ParsedUssdResponse(
+                    type = com.example.data.model.UssdResponseType.ERROR_RESULT,
+                    title = "Connection Limit Reached",
+                    body = "Dialing was stopped to protect your device from repetitive carrier queries.",
+                    isTerminal = true,
+                    isSuccess = false
+                ),
+                isSuccess = false
+            )
+            isSessionRunning = false
+            return
+        }
+
+        dialAttempts++
+        isSessionRunning = true
         currentSessionCode = cleanCode
         currentSessionStartTime = System.currentTimeMillis()
         currentStepLogs.clear()
         currentFlowSteps.clear()
         currentSimSlot = simSlot
 
+        val sessionId = UUID.randomUUID().toString()
+        EmergencyStopManager.registerSession(sessionId)
+
         val flow = UssdSessionFlow(
-            sessionId = UUID.randomUUID().toString(),
+            sessionId = sessionId,
             ussdCode = cleanCode,
             simSlot = simSlot,
-            isSimulation = true,
             startTime = currentSessionStartTime,
             status = FlowStatus.ACTIVE
         )
         _currentFlow.value = flow
 
-        // Set state to Dialing briefly, then present the interactive internal USSD screen
-        _sessionState.value = UssdSessionState.Dialing(cleanCode, simSlot, isSimulation = true, activeFlow = flow)
+        // Set state to Dialing with live flow
+        _sessionState.value = UssdSessionState.Dialing(cleanCode, simSlot, activeFlow = flow)
 
-        scope.launch {
-            kotlinx.coroutines.delay(400) // Realistic telecom carrier connection latency
-            val initialResponseText = generateInitialCarrierResponse(cleanCode)
-            val parsed = UssdParser.parse(initialResponseText, 1)
+        // Start overlay service so Codee floating UI can appear
+        CodeeOverlayService.start(context)
 
-            val stepRecord = UssdFlowStepRecord(
-                stepIndex = 1,
-                rawPrompt = initialResponseText,
-                parsedTitle = parsed.title,
-                parsedBody = parsed.body,
-                availableOptions = parsed.options,
-                inputType = parsed.inputType,
-                timestamp = System.currentTimeMillis()
-            )
-            currentFlowSteps.add(stepRecord)
-            currentStepLogs.add(
-                StepLogItem(
-                    stepNumber = 1,
-                    promptText = parsed.body.ifBlank { parsed.title },
-                    userInput = null
-                )
-            )
-
-            val updatedFlow = flow.copy(steps = currentFlowSteps.toList())
-            _currentFlow.value = updatedFlow
-
-            if (parsed.isTerminal) {
+        // Start timeout timer (30 seconds) that is cancelled immediately upon response
+        timeoutManager.startTimeout(TIMEOUT_DURATION_MS) {
+            if (isSessionRunning) {
+                Log.w(TAG, "USSD request for $cleanCode timed out after ${TIMEOUT_DURATION_MS / 1000}s.")
+                onSessionEnd()
                 val duration = System.currentTimeMillis() - currentSessionStartTime
-                val finalFlow = updatedFlow.copy(
-                    status = FlowStatus.COMPLETED,
+                val finalFlow = flow.copy(
+                    status = FlowStatus.FAILED,
                     endTime = System.currentTimeMillis(),
-                    finalSummary = parsed.body.ifBlank { parsed.title }
+                    finalSummary = "USSD request timed out. Please check mobile signal and try again."
                 )
                 _currentFlow.value = finalFlow
+                val errorParsed = ParsedUssdResponse(
+                    type = com.example.data.model.UssdResponseType.ERROR_RESULT,
+                    title = "Carrier Request Timeout",
+                    body = "The mobile carrier did not respond within ${TIMEOUT_DURATION_MS / 1000} seconds. Please check your signal or try again.",
+                    isTerminal = true,
+                    isSuccess = false
+                )
                 _sessionState.value = UssdSessionState.Completed(
                     code = cleanCode,
-                    summary = parsed.body.ifBlank { parsed.title },
-                    response = parsed,
+                    summary = "USSD request timed out after 30 seconds",
+                    response = errorParsed,
                     flow = finalFlow,
                     historySteps = currentStepLogs.toList(),
-                    isSuccess = parsed.isSuccess,
-                    isSimulation = true,
+                    isSuccess = false,
                     durationMs = duration
                 )
-                saveHistoryToDatabase(parsed, isSuccess = parsed.isSuccess, isSimulation = true, flow = finalFlow)
-            } else {
-                _sessionState.value = UssdSessionState.ActiveSession(
-                    code = cleanCode,
-                    step = 1,
-                    response = parsed,
-                    flow = updatedFlow,
-                    historySteps = currentStepLogs.toList(),
-                    isSimulation = true,
-                    simSlot = simSlot,
-                    isAutomating = automatedSteps.isNotEmpty(),
-                    pendingInputs = automatedSteps
-                )
+            }
+        }
 
-                // If automated steps are supplied, execute them sequentially
-                if (automatedSteps.isNotEmpty()) {
-                    scope.launch {
-                        for ((idx, stepInput) in automatedSteps.withIndex()) {
-                            kotlinx.coroutines.delay(650)
-                            if (_sessionState.value !is UssdSessionState.ActiveSession) {
-                                break
-                            }
-                            submitStepResponse(stepInput)
-                            kotlinx.coroutines.delay(650)
-                        }
-                    }
+        // Execute internal USSD Request to the carrier network
+        RealUssdHandler.dialCode(
+            context = context,
+            code = cleanCode,
+            simSlot = simSlot,
+            callback = object : UssdCallback {
+                override fun onResponse(response: String) {
+                    // Response received: cancel timeout immediately
+                    timeoutManager.markResponseReceived()
+                    Log.i(TAG, "Real carrier response received: $response")
+                    handleCarrierResponse(response, isTerminalOverride = false)
+                }
+
+                override fun onError(error: String) {
+                    timeoutManager.cancelTimeout()
+                    Log.w(TAG, "Carrier error / dial failure: $error")
+                    onSessionEnd()
+                    val duration = System.currentTimeMillis() - currentSessionStartTime
+                    val finalFlow = flow.copy(
+                        status = FlowStatus.FAILED,
+                        endTime = System.currentTimeMillis(),
+                        finalSummary = error
+                    )
+                    _currentFlow.value = finalFlow
+                    val errorParsed = ParsedUssdResponse(
+                        type = com.example.data.model.UssdResponseType.ERROR_RESULT,
+                        title = "Carrier Service Notice",
+                        body = error,
+                        isTerminal = true,
+                        isSuccess = false
+                    )
+                    _sessionState.value = UssdSessionState.Completed(
+                        code = cleanCode,
+                        summary = error,
+                        response = errorParsed,
+                        flow = finalFlow,
+                        historySteps = currentStepLogs.toList(),
+                        isSuccess = false,
+                        durationMs = duration
+                    )
+                    saveHistoryToDatabase(errorParsed, isSuccess = false, isSimulation = false, flow = finalFlow)
                 }
             }
-        }
-    }
-
-    private fun generateInitialCarrierResponse(code: String): String {
-        return when {
-            code == "*334#" || code.startsWith("*334") -> {
-                "M-PESA Main Menu (Page 1/2)\n1. Send Money\n2. Withdraw Cash\n3. Buy Airtime\n4. Pay Bill\n5. Lipa Na M-PESA\n6. My Account\n99. Next\n0. Exit"
-            }
-            code == "*144#" || code.startsWith("*144") -> {
-                "Airtime Balance: Your main account balance is KES 420.50. Valid until 15/09/2026. Free 50 SMS available."
-            }
-            code == "*544#" || code.startsWith("*544") -> {
-                "Safaricom Tunukiwa & Data:\n1. 1.5GB 3hr @ Ksh 50\n2. 2.5GB 24hr @ Ksh 100\n3. 10GB 30days @ Ksh 1000\n4. Check Data Balance\n99. Next\n0. Exit"
-            }
-            code == "*141#" || code == "*185#" || code.startsWith("*185") -> {
-                "Airtel Money & Self-Care:\n1. Send Money\n2. Buy Airtime\n3. Withdraw Cash\n4. Pay Bills & Utilities\n5. My Account & Balance\n99. Next\n0. Exit"
-            }
-            code == "*123#" || code.startsWith("*123") -> {
-                "Telkom Kenya Selfcare:\n1. Check Balance\n2. Top Up Airtime\n3. Buy Data Bundles\n4. T-Kash Mobile Money\n0. Exit"
-            }
-            code == "*247#" || code.startsWith("*247") -> {
-                "Equity Eazzy 247:\n1. Send Money\n2. Withdraw Cash\n3. Check Balance\n4. Mini Statement\n5. Loans & EquiLoan\n99. Next\n0. Exit"
-            }
-            code == "*522#" || code.startsWith("*522") -> {
-                "KCB Banking:\n1. Funds Transfer\n2. Balance Enquiry\n3. Mini Statement\n4. KCB M-PESA Loan\n98. Back\n0. Exit"
-            }
-            code == "*667#" || code.startsWith("*667") -> {
-                "Co-op Bank MCo-op Cash:\n1. Send Money\n2. Account Balance\n3. Mini Statement\n4. Pay Bill\n98. Back\n0. Exit"
-            }
-            else -> {
-                "Carrier USSD Service ($code):\n1. Check Account Status\n2. Top Up / Recharge\n3. Active Subscriptions\n4. Customer Support\n98. Back\n0. Exit"
-            }
-        }
+        )
     }
 
     /**
-     * Called by CodeeAccessibilityService when a live USSD dialog is captured from the carrier.
-     * The app purely parses and displays the response, and waits for user interaction.
+     * Process real response text from carrier (either from TelephonyManager or Accessibility Service).
      */
-    fun onUssdDialogCaptured(
-        text: String,
-        inputNode: AccessibilityNodeInfo?,
-        sendButton: AccessibilityNodeInfo?,
-        cancelButton: AccessibilityNodeInfo?
-    ) {
-        lastInputNode = if (inputNode != null) WeakReference(inputNode) else null
-        lastSendButton = if (sendButton != null) WeakReference(sendButton) else null
-        lastCancelButton = if (cancelButton != null) WeakReference(cancelButton) else null
+    private fun handleCarrierResponse(text: String, isTerminalOverride: Boolean) {
+        // Immediate cancellation of timeout on any incoming response
+        timeoutManager.markResponseReceived()
 
         val currentStep = currentFlowSteps.size + 1
         val parsed = UssdParser.parse(text, currentStep)
-
-        currentStepLogs.add(
-            StepLogItem(
-                stepNumber = currentStep,
-                promptText = parsed.body.ifBlank { parsed.title },
-                userInput = null
-            )
-        )
+        val isError = isCarrierErrorResponse(text) || !parsed.isSuccess
+        val isTerminal = parsed.isTerminal || isTerminalOverride || isError
 
         val stepRecord = UssdFlowStepRecord(
             stepIndex = currentStep,
@@ -235,18 +240,26 @@ object UssdSessionManager {
             timestamp = System.currentTimeMillis()
         )
         currentFlowSteps.add(stepRecord)
+        currentStepLogs.add(
+            StepLogItem(
+                stepNumber = currentStep,
+                promptText = parsed.body.ifBlank { parsed.title },
+                userInput = null
+            )
+        )
 
         val updatedFlow = (_currentFlow.value ?: UssdSessionFlow(
             ussdCode = currentSessionCode,
-            simSlot = currentSimSlot,
-            isSimulation = false
+            simSlot = currentSimSlot
         )).copy(steps = currentFlowSteps.toList())
         _currentFlow.value = updatedFlow
 
-        if (parsed.isTerminal) {
+        if (isTerminal) {
+            onSessionEnd()
             val duration = System.currentTimeMillis() - currentSessionStartTime
+            val isSuccess = parsed.isSuccess && !isError
             val finalFlow = updatedFlow.copy(
-                status = FlowStatus.COMPLETED,
+                status = if (isSuccess) FlowStatus.COMPLETED else FlowStatus.FAILED,
                 endTime = System.currentTimeMillis(),
                 finalSummary = parsed.body.ifBlank { parsed.title }
             )
@@ -254,33 +267,47 @@ object UssdSessionManager {
             _sessionState.value = UssdSessionState.Completed(
                 code = currentSessionCode,
                 summary = parsed.body.ifBlank { parsed.title },
-                response = parsed,
+                response = parsed.copy(isSuccess = isSuccess, isTerminal = true),
                 flow = finalFlow,
                 historySteps = currentStepLogs.toList(),
-                isSuccess = parsed.isSuccess,
-                isSimulation = false,
+                isSuccess = isSuccess,
                 durationMs = duration
             )
-            saveHistoryToDatabase(parsed, isSuccess = parsed.isSuccess, isSimulation = false, flow = finalFlow)
-            return
+            saveHistoryToDatabase(parsed, isSuccess = isSuccess, isSimulation = false, flow = finalFlow)
+        } else {
+            // Interactive live session awaiting user choice
+            _sessionState.value = UssdSessionState.ActiveSession(
+                code = currentSessionCode,
+                step = currentStep,
+                response = parsed,
+                flow = updatedFlow,
+                historySteps = currentStepLogs.toList(),
+                simSlot = currentSimSlot,
+                isAutomating = false,
+                pendingInputs = emptyList()
+            )
         }
-
-        // Live interactive USSD session: simply display and wait for user's manual choice
-        _sessionState.value = UssdSessionState.ActiveSession(
-            code = currentSessionCode,
-            step = currentStep,
-            response = parsed,
-            flow = updatedFlow,
-            historySteps = currentStepLogs.toList(),
-            isSimulation = false,
-            simSlot = currentSimSlot,
-            isAutomating = false,
-            pendingInputs = emptyList()
-        )
     }
 
     /**
-     * Submit an option or text response to the active session when the user clicks/types
+     * Called by CodeeAccessibilityService when a live USSD dialog is captured from the carrier.
+     */
+    fun onUssdDialogCaptured(
+        text: String,
+        inputNode: AccessibilityNodeInfo?,
+        sendButton: AccessibilityNodeInfo?,
+        cancelButton: AccessibilityNodeInfo?
+    ) {
+        timeoutManager.markResponseReceived()
+        lastInputNode = if (inputNode != null) WeakReference(inputNode) else null
+        lastSendButton = if (sendButton != null) WeakReference(sendButton) else null
+        lastCancelButton = if (cancelButton != null) WeakReference(cancelButton) else null
+
+        handleCarrierResponse(text, isTerminalOverride = false)
+    }
+
+    /**
+     * Submit an option or text response to the active carrier session when the user clicks or types.
      */
     fun submitStepResponse(userInput: String) {
         val currentState = _sessionState.value
@@ -305,9 +332,16 @@ object UssdSessionManager {
         _sessionState.value = UssdSessionState.Submitting(
             input = userInput,
             step = step,
-            flow = _currentFlow.value,
-            isSimulation = true
+            flow = _currentFlow.value
         )
+
+        // Reset timeout for next step response
+        timeoutManager.startTimeout(TIMEOUT_DURATION_MS) {
+            if (isSessionRunning) {
+                Log.w(TAG, "Step submit timed out waiting for carrier.")
+                timeoutManager.cancelTimeout()
+            }
+        }
 
         val service = activeAccessibilityService?.get()
         val inputNode = lastInputNode?.get()
@@ -316,183 +350,56 @@ object UssdSessionManager {
         if (service != null && inputNode != null) {
             val success = service.submitTextToActiveDialog(inputNode, userInput, sendBtn)
             if (!success) {
-                Log.w(TAG, "Accessibility node submit failed, trying fallback")
+                Log.w(TAG, "Accessibility node submit failed on live dialog")
             }
         } else {
-            // Run internal interactive engine
-            scope.launch {
-                kotlinx.coroutines.delay(350)
-                val nextStepIndex = step + 1
-                val nextResponseText = generateNextStepResponse(currentSessionCode, nextStepIndex, userInput, currentStepLogs)
-                val parsed = UssdParser.parse(nextResponseText, nextStepIndex)
-
-                val stepRecord = UssdFlowStepRecord(
-                    stepIndex = nextStepIndex,
-                    rawPrompt = nextResponseText,
-                    parsedTitle = parsed.title,
-                    parsedBody = parsed.body,
-                    availableOptions = parsed.options,
-                    inputType = parsed.inputType,
-                    timestamp = System.currentTimeMillis()
-                )
-                currentFlowSteps.add(stepRecord)
-                currentStepLogs.add(
-                    StepLogItem(
-                        stepNumber = nextStepIndex,
-                        promptText = parsed.body.ifBlank { parsed.title },
-                        userInput = null
-                    )
-                )
-
-                val updatedFlow = (_currentFlow.value ?: UssdSessionFlow(
-                    ussdCode = currentSessionCode,
-                    simSlot = currentSimSlot,
-                    isSimulation = true
-                )).copy(steps = currentFlowSteps.toList())
-                _currentFlow.value = updatedFlow
-
-                if (parsed.isTerminal) {
-                    val duration = System.currentTimeMillis() - currentSessionStartTime
-                    val finalFlow = updatedFlow.copy(
-                        status = FlowStatus.COMPLETED,
-                        endTime = System.currentTimeMillis(),
-                        finalSummary = parsed.body.ifBlank { parsed.title }
-                    )
-                    _currentFlow.value = finalFlow
-                    _sessionState.value = UssdSessionState.Completed(
-                        code = currentSessionCode,
-                        summary = parsed.body.ifBlank { parsed.title },
-                        response = parsed,
-                        flow = finalFlow,
-                        historySteps = currentStepLogs.toList(),
-                        isSuccess = parsed.isSuccess,
-                        isSimulation = true,
-                        durationMs = duration
-                    )
-                    saveHistoryToDatabase(parsed, isSuccess = parsed.isSuccess, isSimulation = true, flow = finalFlow)
-                } else {
-                    _sessionState.value = UssdSessionState.ActiveSession(
-                        code = currentSessionCode,
-                        step = nextStepIndex,
-                        response = parsed,
-                        flow = updatedFlow,
-                        historySteps = currentStepLogs.toList(),
-                        isSimulation = true,
-                        simSlot = currentSimSlot,
-                        isAutomating = false,
-                        pendingInputs = emptyList()
-                    )
-                }
-            }
+            Log.i(TAG, "Submitted step response: $userInput (waiting for live carrier response)")
         }
     }
 
-    private fun generateNextStepResponse(
-        code: String,
-        stepIndex: Int,
-        lastInput: String,
-        logs: List<StepLogItem>
-    ): String {
-        // Universal Smart Navigation Intercepts
-        if (lastInput == "0" && (logs.lastOrNull()?.promptText?.contains("Exit", ignoreCase = true) == true || stepIndex == 2)) {
-            return "Session terminated by user. Thank you for using Codee USSD Selfcare."
-        }
-        if (lastInput == "0" || lastInput.contains("main", ignoreCase = true)) {
-            return generateInitialCarrierResponse(code)
-        }
-        if (lastInput == "98" || lastInput.contains("back", ignoreCase = true) || lastInput.contains("rudi", ignoreCase = true)) {
-            return generateInitialCarrierResponse(code)
-        }
-        if (lastInput == "99" || lastInput.contains("next", ignoreCase = true) || lastInput.contains("mbele", ignoreCase = true)) {
-            if (code.contains("334") || code == "*334#") {
-                return "M-PESA Menu (Page 2/2)\n7. Fuliza M-PESA\n8. M-Shwari & KCB M-PESA\n9. Global Pay (Virtual Visa)\n10. Halal M-PESA\n98. Back\n0. Main Menu"
-            } else if (code.contains("544")) {
-                return "Safaricom Data & Packs (Page 2/2)\n5. Monthly 25GB @ Ksh 2000\n6. YouTube & Social Packs\n7. PostPay Unlimited\n98. Back\n0. Main Menu"
-            } else {
-                return "Additional Services (Page 2/2):\n5. Statements & Reports\n6. Tariff & Roaming Plans\n7. Security & Pin Settings\n98. Back\n0. Main Menu"
-            }
-        }
+    fun onSessionEnd() {
+        isSessionRunning = false
+        timeoutManager.cancelTimeout()
+    }
 
-        val firstInput = logs.firstOrNull()?.userInput ?: lastInput
+    fun isCarrierErrorResponse(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("connection problem") ||
+                lower.contains("invalid mmi") ||
+                lower.contains("mmi code") ||
+                lower.contains("service unavailable") ||
+                lower.contains("session timed out") ||
+                lower.contains("session expired") ||
+                lower.contains("try again later") ||
+                lower.contains("system busy")
+    }
 
-        if (code.contains("334") || code == "*334#") {
-            // M-PESA Flow
-            if (firstInput == "1" || firstInput.contains("send", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "Enter recipient phone number (e.g. 0712345678):"
-                    3 -> "Enter Amount in KES (Min 10, Max 250,000):"
-                    4 -> "Enter 4-digit M-PESA PIN:"
-                    5 -> "Send KES 15,250.00 to EMMAH KILONZO 0708814308? Fee KES 0.00.\n1. Confirm & Send\n2. Cancel"
-                    else -> "TFB517W619 Confirmed. Ksh 15,250.00 sent to EMMAH KILONZO 0708814308 on 28/8/26 at 2:21 PM. New M-PESA balance is Ksh 34,210.00. Transaction cost, Ksh 0.00."
-                }
-            } else if (firstInput == "2" || firstInput.contains("withdraw", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "Enter Agent Number (6 digits):"
-                    3 -> "Enter Store Number (if applicable) or 0:"
-                    4 -> "Enter Amount to Withdraw (KES):"
-                    5 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "WTD892104 Confirmed. Ksh 5,000.00 withdrawn from Agent 248190 on 28/8/26 at 2:22 PM. New M-PESA balance is Ksh 29,210.00."
-                }
-            } else if (firstInput == "3" || firstInput.contains("airtime", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "Buy Airtime for:\n1. My Phone\n2. Other Phone\n98. Back"
-                    3 -> "Enter Amount in KES:"
-                    4 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "AIR441920 Confirmed. Ksh 200.00 airtime purchased successfully on 28/8/26 at 2:23 PM. Balance Ksh 29,010.00."
-                }
-            } else if (firstInput == "4" || firstInput.contains("bill", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "Enter Business Number (Paybill):"
-                    3 -> "Enter Account Number:"
-                    4 -> "Enter Amount in KES:"
-                    5 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "PBL991204 Confirmed. Ksh 1,200.00 paid to KPLC PREPAID 888888 for account 142890123."
-                }
-            } else if (firstInput == "5" || firstInput.contains("lipa", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "1. Buy Goods and Services (Till)\n2. Pochi La Biashara\n98. Back"
-                    3 -> "Enter Till / Merchant Number:"
-                    4 -> "Enter Amount in KES:"
-                    5 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "LIP812034 Confirmed. Ksh 850.00 paid to SUPERMARKET STORE 551020 on 28/8/26."
-                }
-            } else if (firstInput == "6" || firstInput.contains("account", ignoreCase = true) || firstInput.contains("balance", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "My Account:\n1. Check Balance\n2. Mini Statement\n3. Change PIN\n4. Reset PIN\n98. Back\n0. Main Menu"
-                    3 -> "Enter 4-digit M-PESA PIN to view balance:"
-                    else -> "M-PESA Balance: Your balance is Ksh 15,250.00. Available Fuliza Limit is Ksh 12,000.00. Transacted securely via Codee."
-                }
-            } else if (firstInput == "7" || firstInput.contains("fuliza", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "Fuliza M-PESA:\n1. Opt In\n2. Check Limit & Balance\n3. Mini Statement\n98. Back\n0. Main Menu"
-                    3 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "Fuliza M-PESA Limit: Available limit is Ksh 12,000.00. Outstanding balance Ksh 0.00."
-                }
-            } else if (firstInput == "8" || firstInput.contains("shwari", ignoreCase = true)) {
-                return when (stepIndex) {
-                    2 -> "M-Shwari Services:\n1. Send to M-Shwari\n2. Withdraw from M-Shwari\n3. Lock Savings Account\n4. Loan Request\n98. Back\n0. Main Menu"
-                    3 -> "Enter 4-digit M-PESA PIN:"
-                    else -> "M-Shwari Balance: Savings account balance is Ksh 8,450.00. Available loan limit is Ksh 15,000.00."
-                }
-            }
+    fun emergencyStop(context: Context? = null) {
+        Log.i(TAG, "Emergency Stop triggered - halting all sessions and resetting locks.")
+        dialAttempts = 0
+        isSessionRunning = false
+        timeoutManager.cancelTimeout()
+        RealUssdHandler.cancelCurrentSession()
+        val service = activeAccessibilityService?.get()
+        val cancelBtn = lastCancelButton?.get()
+        service?.dismissActiveDialog(cancelBtn)
+        if (context != null) {
+            CodeeOverlayService.stop(context)
         }
-
-        // Default multi-step fallback
-        return when (stepIndex) {
-            2 -> "Option selected ($lastInput). Please enter requested details or reference number:"
-            3 -> "Enter confirmation Amount or Security PIN:"
-            4 -> "Confirm operation ($lastInput)?\n1. Confirm & Execute\n2. Cancel"
-            else -> "TRX-${System.currentTimeMillis().toString().takeLast(6)} Confirmed. Service request successfully completed via Codee."
-        }
+        _currentFlow.value = _currentFlow.value?.copy(
+            status = FlowStatus.CANCELLED,
+            endTime = System.currentTimeMillis()
+        )
+        _sessionState.value = UssdSessionState.Idle
     }
 
     fun dismissSession(context: Context? = null) {
-        val currentState = _sessionState.value
-        if (currentState is UssdSessionState.ActiveSession && !currentState.isSimulation) {
-            val service = activeAccessibilityService?.get()
-            val cancelBtn = lastCancelButton?.get()
-            service?.dismissActiveDialog(cancelBtn)
-        }
+        onSessionEnd()
+        timeoutManager.cancelTimeout()
+        RealUssdHandler.cancelCurrentSession()
+        val service = activeAccessibilityService?.get()
+        val cancelBtn = lastCancelButton?.get()
+        service?.dismissActiveDialog(cancelBtn)
         if (context != null) {
             CodeeOverlayService.stop(context)
         }

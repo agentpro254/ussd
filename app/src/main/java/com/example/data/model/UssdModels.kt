@@ -46,6 +46,10 @@ data class ParsedUssdResponse(
     val balance: String? = null,
     val amount: String? = null,
     val recipient: String? = null,
+    val sender: String? = null,
+    val phoneNumber: String? = null,
+    val confirmOption: String? = null,
+    val cancelOption: String? = null,
     val transactionId: String? = null,
     val reference: String? = null,
     val options: List<UssdMenuOption> = emptyList(),
@@ -100,7 +104,6 @@ data class UssdSessionFlow(
     val sessionId: String = UUID.randomUUID().toString(),
     val ussdCode: String,
     val simSlot: Int = 0,
-    val isSimulation: Boolean = false,
     val startTime: Long = System.currentTimeMillis(),
     val endTime: Long? = null,
     val status: FlowStatus = FlowStatus.ACTIVE,
@@ -132,7 +135,6 @@ sealed interface UssdSessionState {
     data class Dialing(
         val code: String,
         val simSlot: Int = 0,
-        val isSimulation: Boolean = false,
         val activeFlow: UssdSessionFlow? = null
     ) : UssdSessionState
 
@@ -142,7 +144,6 @@ sealed interface UssdSessionState {
         val response: ParsedUssdResponse,
         val flow: UssdSessionFlow,
         val historySteps: List<StepLogItem> = emptyList(),
-        val isSimulation: Boolean = false,
         val simSlot: Int = 0,
         val isAutomating: Boolean = false,
         val pendingInputs: List<String> = emptyList()
@@ -151,18 +152,16 @@ sealed interface UssdSessionState {
     data class Submitting(
         val input: String,
         val step: Int,
-        val flow: UssdSessionFlow? = null,
-        val isSimulation: Boolean = false
+        val flow: UssdSessionFlow? = null
     ) : UssdSessionState
 
     data class Completed(
         val code: String,
         val summary: String,
         val response: ParsedUssdResponse,
-        val flow: UssdSessionFlow,
-        val historySteps: List<StepLogItem>,
+        val flow: UssdSessionFlow? = null,
+        val historySteps: List<StepLogItem> = emptyList(),
         val isSuccess: Boolean = true,
-        val isSimulation: Boolean = false,
         val durationMs: Long = 0
     ) : UssdSessionState
 
@@ -171,8 +170,7 @@ sealed interface UssdSessionState {
         val errorReason: String,
         val rawText: String,
         val flow: UssdSessionFlow? = null,
-        val historySteps: List<StepLogItem> = emptyList(),
-        val isSimulation: Boolean = false
+        val historySteps: List<StepLogItem> = emptyList()
     ) : UssdSessionState
 }
 

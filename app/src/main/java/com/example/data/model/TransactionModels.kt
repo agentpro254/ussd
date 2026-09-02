@@ -47,3 +47,13 @@ data class SmartFlowResult(
     val summary: String = "",
     val rawResponse: String = ""
 )
+
+data class TransactionDetails(
+    val type: TransactionType,
+    val amount: String,
+    val recipient: String? = null,
+    val sender: String? = null,
+    val phoneNumber: String? = null,
+    val transactionCode: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)

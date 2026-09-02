@@ -41,7 +41,7 @@ object UssdParser {
     )
 
     private val PIN_PATTERNS = listOf(
-        "enter pin", "enter your pin", "input pin", "type pin", "pin ya",
+        "pin", "secret pin", "enter pin", "enter your pin", "input pin", "type pin", "pin ya",
         "secret code", "enter password", "weka namba ya siri", "mot de passe",
         "kod pin", "security code", "m-pesa pin", "airtel money pin", "t-kash pin"
     )
@@ -92,6 +92,8 @@ object UssdParser {
         var balance: String? = null
         var amount: String? = null
         var recipient: String? = null
+        var sender: String? = null
+        var phoneNumber: String? = null
         var transactionId: String? = null
         var reference: String? = null
 
@@ -149,6 +151,17 @@ object UssdParser {
             }
         }
 
+        // 7. Phone number and sender extraction via TransactionParser
+        phoneNumber = TransactionParser.extractPhoneNumber(clean)
+        if (clean.contains("from", ignoreCase = true) || clean.contains("kutoka", ignoreCase = true)) {
+            val s = TransactionParser.extractSenderName(clean)
+            if (s != "Unknown") sender = s
+        }
+        if (recipient == null || recipient == "Unknown") {
+            val r = TransactionParser.extractRecipientName(clean)
+            if (r != "Unknown") recipient = r
+        }
+
         // Case A: Explicit Error Terminal State
         if (ERROR_PATTERNS.any { lower.contains(it) }) {
             return ParsedUssdResponse(
@@ -188,6 +201,8 @@ object UssdParser {
                 balance = balance,
                 amount = amount,
                 recipient = recipient,
+                sender = sender,
+                phoneNumber = phoneNumber,
                 transactionId = transactionId,
                 reference = reference,
                 rawText = rawText,
@@ -199,7 +214,7 @@ object UssdParser {
 
         // Case C: Menu Options (Numbered / Bulleted Choices)
         val menuOptions = extractMenuOptions(clean)
-        if (menuOptions.isNotEmpty()) {
+        if (menuOptions.isNotEmpty() && !isConfirmationPrompt(lower)) {
             val (title, body) = extractHeaderAndBody(clean, menuOptions)
             return ParsedUssdResponse(
                 type = UssdResponseType.MENU,
@@ -214,9 +229,12 @@ object UssdParser {
 
         // Case D: Confirmation Dialog (Yes / No / Confirm / Cancel)
         if (isConfirmationPrompt(lower)) {
+            val confirmOpt = extractOptionNumber(clean, listOf("confirm", "yes", "accept", "proceed", "ndio", "thibitisha")) ?: "1"
+            val cancelOpt = extractOptionNumber(clean, listOf("cancel", "no", "stop", "exit", "kataa", "hapana")) ?: "2"
+
             val options = listOf(
-                UssdMenuOption(id = "1", label = "Confirm / Accept"),
-                UssdMenuOption(id = "2", label = "Cancel Transaction", isBack = true)
+                UssdMenuOption(id = confirmOpt, label = "Confirm (Press $confirmOpt)"),
+                UssdMenuOption(id = cancelOpt, label = "Cancel (Press $cancelOpt)", isBack = true)
             )
             return ParsedUssdResponse(
                 type = UssdResponseType.CONFIRMATION,
@@ -224,6 +242,10 @@ object UssdParser {
                 body = clean,
                 amount = amount,
                 recipient = recipient,
+                sender = sender,
+                phoneNumber = phoneNumber,
+                confirmOption = confirmOpt,
+                cancelOption = cancelOpt,
                 options = options,
                 rawText = rawText,
                 stepIndex = stepIndex,
@@ -327,9 +349,22 @@ object UssdParser {
 
     private fun isConfirmationPrompt(lower: String): Boolean {
         val hasConfirmWord = lower.contains("confirm") || lower.contains("do you want to") ||
-                lower.contains("thibitisha") || lower.contains("authorize") || lower.contains("proceed")
-        val hasOptions = lower.contains("yes") || lower.contains("cancel") || lower.contains("1:") || lower.contains("1.") || lower.contains("1 for yes")
-        return hasConfirmWord && (hasOptions || lower.contains("1") || lower.contains("pin"))
+                lower.contains("thibitisha") || lower.contains("proceed") || lower.contains("accept")
+        val hasOptions = lower.contains("yes") || lower.contains("cancel") || lower.contains("1:") ||
+                lower.contains("1.") || lower.contains("1 for yes") || lower.contains("1 to confirm") ||
+                lower.contains("press 1") || (lower.contains("1") && lower.contains("2"))
+        return hasConfirmWord && hasOptions
+    }
+
+    private fun extractOptionNumber(text: String, keywords: List<String>): String? {
+        val lower = text.lowercase()
+        for (kw in keywords) {
+            val regex1 = Regex("""(?i)(?:press|bonyeza|hit)\s*([0-9*#]+)\s*(?:to|kwa|for)\s*$kw""")
+            regex1.find(lower)?.let { return it.groupValues[1].trim() }
+            val regex2 = Regex("""(?i)([0-9*#]+)\s*[\.:\)\-]\s*(?:to\s*)?$kw""")
+            regex2.find(lower)?.let { return it.groupValues[1].trim() }
+        }
+        return null
     }
 
     private fun detectInputType(lower: String): Triple<UssdInputType, String, String> {

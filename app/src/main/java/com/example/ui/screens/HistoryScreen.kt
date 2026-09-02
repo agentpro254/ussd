@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.UssdHistoryItem
+import com.example.data.parser.TransactionParser
+import com.example.ui.components.TransactionItem
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.EmeraldSuccessBg
 import com.example.ui.theme.IndigoInfo
@@ -193,8 +195,10 @@ private fun HistoryItemCard(
         }
     }
 
-    val isTransaction = item.summary.contains("KES", ignoreCase = true) || item.summary.contains("KSh", ignoreCase = true)
-    val isSent = !item.summary.contains("received", ignoreCase = true)
+    val parsedTx = remember(item.summary) {
+        TransactionParser.parseTransaction(item.summary)?.copy(timestamp = item.timestamp)
+    }
+    val isSent = parsedTx?.type != com.example.data.model.TransactionType.RECEIVED && !item.summary.contains("received", ignoreCase = true)
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -260,31 +264,54 @@ private fun HistoryItemCard(
                         )
                     }
                 }
-
-                if (item.isSimulation) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = IndigoInfoBg
-                    ) {
-                        Text(
-                            text = "Simulator",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 10.sp,
-                            color = IndigoInfo,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Text(
-                text = item.summary,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                lineHeight = 19.sp
-            )
+            if (parsedTx != null) {
+                val person = if (isSent) parsedTx.recipient ?: "Recipient" else parsedTx.sender ?: "Sender"
+                val actionVerb = if (isSent) "📤 Sent" else "📥 Received"
+                val prep = if (isSent) "to" else "from"
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "$actionVerb ${parsedTx.amount} $prep $person",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (!parsedTx.phoneNumber.isNullOrBlank()) {
+                        Text(
+                            text = "📱 ${parsedTx.phoneNumber}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!parsedTx.transactionCode.isNullOrBlank()) {
+                        Text(
+                            text = "🔑 ${parsedTx.transactionCode}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TealPrimary
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = item.summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 19.sp
+                )
+            }
 
             Spacer(modifier = Modifier.height(10.dp))
 

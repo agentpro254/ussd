@@ -1,14 +1,41 @@
 package com.example
 
+import com.example.data.model.TransactionType
 import com.example.data.model.UssdInputType
 import com.example.data.model.UssdResponseType
+import com.example.data.parser.TransactionParser
 import com.example.data.parser.UssdParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExampleUnitTest {
+
+    @Test
+    fun testSentMoneyTransactionParsing() {
+        val raw = "QK93JH788X Confirmed. KES 500.00 sent to John Doe 0712345678 on 28/8/26 at 2:30 PM. New M-PESA balance is KES 4,500.00."
+        val parsed = TransactionParser.parseTransaction(raw)
+        assertNotNull(parsed)
+        assertEquals(TransactionType.SENT, parsed!!.type)
+        assertEquals("KES 500.00", parsed.amount)
+        assertEquals("John Doe", parsed.recipient)
+        assertEquals("0712345678", parsed.phoneNumber)
+        assertEquals("QK93JH788X", parsed.transactionCode)
+    }
+
+    @Test
+    fun testReceivedMoneyTransactionParsing() {
+        val raw = "ABC98765XYZ Confirmed. You have received KES 1,000.00 from Mary Smith 0723456789 on 28/8/26 at 12:15 PM."
+        val parsed = TransactionParser.parseTransaction(raw)
+        assertNotNull(parsed)
+        assertEquals(TransactionType.RECEIVED, parsed!!.type)
+        assertEquals("KES 1,000.00", parsed.amount)
+        assertEquals("Mary Smith", parsed.sender)
+        assertEquals("0723456789", parsed.phoneNumber)
+        assertEquals("ABC98765XYZ", parsed.transactionCode)
+    }
 
     @Test
     fun testMenuParsing() {
@@ -33,7 +60,7 @@ class ExampleUnitTest {
     fun testPinPromptParsing() {
         val rawUssd = "Enter your 4-digit secret PIN to authorize transfer:"
         val parsed = UssdParser.parse(rawUssd)
-        assertEquals(UssdResponseType.INPUT_PROMPT, parsed.type)
+        assertEquals(UssdResponseType.PIN_REQUEST, parsed.type)
         assertEquals(UssdInputType.PIN, parsed.inputType)
     }
 

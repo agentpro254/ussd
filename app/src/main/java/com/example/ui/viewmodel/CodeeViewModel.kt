@@ -97,6 +97,76 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putString("dialer_mode", mode.name).apply()
     }
 
+    // Anti-Loop & Confirmation Controls
+    private val _requireDialConfirmation = MutableStateFlow(
+        prefs.getBoolean("require_dial_confirmation", true)
+    )
+    val requireDialConfirmation: StateFlow<Boolean> = _requireDialConfirmation.asStateFlow()
+
+    fun setRequireDialConfirmation(enabled: Boolean) {
+        _requireDialConfirmation.value = enabled
+        prefs.edit().putBoolean("require_dial_confirmation", enabled).apply()
+    }
+
+    // Pending confirmation dialog state
+    private val _showConfirmDialog = MutableStateFlow(false)
+    val showConfirmDialog: StateFlow<Boolean> = _showConfirmDialog.asStateFlow()
+
+    private val _confirmDialogCode = MutableStateFlow("")
+    val confirmDialogCode: StateFlow<String> = _confirmDialogCode.asStateFlow()
+
+    private val _confirmDialogSimSlot = MutableStateFlow(0)
+    val confirmDialogSimSlot: StateFlow<Int> = _confirmDialogSimSlot.asStateFlow()
+
+    private val _confirmDialogSteps = MutableStateFlow<List<String>>(emptyList())
+    val confirmDialogSteps: StateFlow<List<String>> = _confirmDialogSteps.asStateFlow()
+
+    private val _confirmDialogTitle = MutableStateFlow("USSD Operation")
+    val confirmDialogTitle: StateFlow<String> = _confirmDialogTitle.asStateFlow()
+
+    private val _confirmDialogIsPinProtected = MutableStateFlow(false)
+    val confirmDialogIsPinProtected: StateFlow<Boolean> = _confirmDialogIsPinProtected.asStateFlow()
+
+    fun requestDialCode(
+        code: String = _dialpadText.value,
+        simSlot: Int = _selectedSimSlot.value,
+        automatedSteps: List<String> = emptyList(),
+        title: String = "USSD Request"
+    ) {
+        val clean = code.trim()
+        if (clean.isBlank()) return
+
+        val validation = com.example.engine.CodeValidator.validateCode(clean)
+        val isPinReq = validation is com.example.engine.ValidationResult.PinRequired
+
+        if (_requireDialConfirmation.value) {
+            _confirmDialogCode.value = clean
+            _confirmDialogSimSlot.value = simSlot
+            _confirmDialogSteps.value = automatedSteps
+            _confirmDialogTitle.value = title
+            _confirmDialogIsPinProtected.value = isPinReq
+            _showConfirmDialog.value = true
+        } else {
+            launchUssd(
+                code = clean,
+                simSlot = simSlot,
+                automatedSteps = automatedSteps
+            )
+        }
+    }
+
+    fun dismissConfirmDialog() {
+        _showConfirmDialog.value = false
+    }
+
+    fun confirmAndLaunchPendingDial() {
+        _showConfirmDialog.value = false
+        val code = _confirmDialogCode.value
+        val simSlot = _confirmDialogSimSlot.value
+        val steps = _confirmDialogSteps.value
+        launchUssd(code = code, simSlot = simSlot, automatedSteps = steps)
+    }
+
     // Smart USSD Engine
     val smartFlowEngine = SmartUssdFlowEngine()
     private val _smartFlowResult = MutableStateFlow<SmartFlowResult?>(null)
@@ -230,19 +300,51 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
     fun launchUssd(
         code: String = _dialpadText.value,
         simSlot: Int = _selectedSimSlot.value,
-        automatedSteps: List<String> = emptyList(),
-        forceSim: Boolean = true
+        automatedSteps: List<String> = emptyList()
     ) {
-        if (code.isBlank()) return
+        val clean = code.trim()
+        if (clean.isBlank()) return
         val context = getApplication<Application>()
 
-        UssdSessionManager.startUssdSession(
-            context = context,
-            rawCode = code,
-            simSlot = simSlot,
-            automatedSteps = automatedSteps,
-            forceSimulation = true
-        )
+        if (_selectedDialerMode.value == DialerMode.SYSTEM_DIALER) {
+            try {
+                val encodedCode = android.net.Uri.encode(clean)
+                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                    data = android.net.Uri.parse("tel:$encodedCode")
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.e("CodeeViewModel", "Failed to launch system dialer intent", e)
+                // Fallback to internal manager
+                UssdSessionManager.startUssdSession(
+                    context = context,
+                    rawCode = clean,
+                    simSlot = simSlot,
+                    automatedSteps = automatedSteps,
+                    userInitiated = true
+                )
+            }
+        } else {
+            UssdSessionManager.startUssdSession(
+                context = context,
+                rawCode = clean,
+                simSlot = simSlot,
+                automatedSteps = automatedSteps,
+                userInitiated = true
+            )
+        }
+    }
+
+    fun stopAllSessions() {
+        val context = getApplication<Application>()
+        com.example.engine.EmergencyStopManager.emergencyStopAll(context)
+    }
+
+    fun clearCache() {
+        clearAllHistory()
+        clearDialpad()
+        stopAllSessions()
     }
 
     fun launchSmartFlow(
@@ -259,8 +361,7 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
             context = context,
             ussdCode = code,
             goal = goal,
-            simSlot = simSlot,
-            forceSimulation = true
+            simSlot = simSlot
         )
     }
 

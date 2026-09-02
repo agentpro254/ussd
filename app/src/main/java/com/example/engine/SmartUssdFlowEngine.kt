@@ -83,8 +83,7 @@ class SmartUssdFlowEngine {
         context: Context,
         ussdCode: String,
         goal: String = "",
-        simSlot: Int = 0,
-        forceSimulation: Boolean = false
+        simSlot: Int = 0
     ) {
         currentGoal = goal
         navigationHistory.clear()
@@ -98,7 +97,8 @@ class SmartUssdFlowEngine {
             context = context,
             rawCode = ussdCode,
             simSlot = simSlot,
-            forceSimulation = forceSimulation
+            automatedSteps = emptyList(),
+            userInitiated = true
         )
     }
 

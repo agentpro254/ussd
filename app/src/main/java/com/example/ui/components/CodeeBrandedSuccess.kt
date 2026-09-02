@@ -67,7 +67,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.TransactionDetails
 import com.example.data.model.TransactionType
+import com.example.data.parser.TransactionParser
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -623,6 +625,140 @@ private fun CodeeDetailChip(
                 fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default,
                 color = Color(0xFF1A1A1A)
             )
+        }
+    }
+}
+
+/**
+ * Overload for CodeeSuccessScreen accepting [TransactionDetails].
+ */
+@Composable
+fun CodeeSuccessScreen(
+    details: TransactionDetails,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    CodeeSuccessScreen(
+        amount = details.amount,
+        recipient = details.recipient,
+        sender = details.sender,
+        phoneNumber = details.phoneNumber,
+        mpesaCode = details.transactionCode,
+        timestamp = details.timestamp,
+        type = details.type,
+        onDone = onDone,
+        modifier = modifier
+    )
+}
+
+/**
+ * Signature TransactionItem for recent lists / history / feeds.
+ * Displays who sent or who received clearly with amount, phone, code, and timestamp.
+ */
+@Composable
+fun TransactionItem(
+    details: TransactionDetails,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val isSent = details.type == TransactionType.SENT
+    val person = if (isSent) details.recipient ?: "Unknown Recipient" else details.sender ?: "Unknown Sender"
+    val accentColor = if (isSent) CodeeBrandGreen else CodeeBrandBlue
+    val iconEmoji = if (isSent) "📤" else "📥"
+    val actionVerb = if (isSent) "Sent" else "Received"
+    val preposition = if (isSent) "to" else "from"
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .testTag("transaction_item_${details.transactionCode ?: "item"}")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            // Top Row: [Emoji] Action + Amount + Person
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(text = iconEmoji, fontSize = 20.sp)
+                    Column {
+                        Text(
+                            text = "$actionVerb ${details.amount} $preposition $person",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1A1A1A)
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = accentColor.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = if (isSent) "SENT" else "RECEIVED",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Sub-details: Phone Number, Transaction Code, Timestamp
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (!details.phoneNumber.isNullOrBlank()) {
+                    Text(
+                        text = "📱 ${details.phoneNumber}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF555555),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                if (!details.transactionCode.isNullOrBlank()) {
+                    Text(
+                        text = "🔑 ${details.transactionCode}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = Color(0xFF555555),
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Transaction Code", details.transactionCode))
+                            Toast.makeText(context, "Code copied: ${details.transactionCode}", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+
+                Text(
+                    text = TransactionParser.formatFullTime(details.timestamp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF888888)
+                )
+            }
         }
     }
 }

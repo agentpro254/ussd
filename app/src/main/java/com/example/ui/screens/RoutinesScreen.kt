@@ -69,7 +69,7 @@ fun RoutinesScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onCreateNewClick,
-                containerColor = TealPrimary,
+                containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.testTag("fab_create_routine")

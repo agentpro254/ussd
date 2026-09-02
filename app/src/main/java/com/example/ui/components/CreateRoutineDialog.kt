@@ -150,7 +150,7 @@ fun CreateRoutineDialog(
                         Surface(
                             onClick = { selectedCategory = cat },
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.surfaceVariant
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
                                 text = cat,
@@ -257,14 +257,14 @@ fun CreateRoutineDialog(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(if (isSelected) TealPrimary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant)
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant)
                                     .clickable { selectedIcon = iconKey },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = vector,
                                     contentDescription = null,
-                                    tint = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -300,7 +300,7 @@ fun CreateRoutineDialog(
                 },
                 enabled = title.isNotBlank() && code.isNotBlank(),
                 shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = TealPrimary)
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
                 Text("Save Routine")
             }

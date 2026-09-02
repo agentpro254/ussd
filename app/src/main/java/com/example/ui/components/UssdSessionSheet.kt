@@ -176,7 +176,6 @@ fun UssdSessionSheet(
                     DialingContent(
                         code = sessionState.code,
                         simSlot = sessionState.simSlot,
-                        isSimulation = sessionState.isSimulation,
                         onRequestCancel = { showCancelConfirmationDialog = true }
                     )
                 }
@@ -187,7 +186,6 @@ fun UssdSessionSheet(
                         response = sessionState.response,
                         flow = sessionState.flow,
                         history = sessionState.historySteps,
-                        isSimulation = sessionState.isSimulation,
                         isAutomating = sessionState.isAutomating,
                         pendingInputs = sessionState.pendingInputs,
                         onSubmit = onSubmitInput,
@@ -198,8 +196,7 @@ fun UssdSessionSheet(
                     SubmittingContent(
                         input = sessionState.input,
                         step = sessionState.step,
-                        flow = sessionState.flow,
-                        isSimulation = sessionState.isSimulation
+                        flow = sessionState.flow
                     )
                 }
                 is UssdSessionState.Completed -> {
@@ -211,7 +208,6 @@ fun UssdSessionSheet(
                         history = sessionState.historySteps,
                         isSuccess = sessionState.isSuccess,
                         durationMs = sessionState.durationMs,
-                        isSimulation = sessionState.isSimulation,
                         onDone = onDismiss
                     )
                 }
@@ -288,7 +284,6 @@ fun UssdSessionSheet(
 private fun DialingContent(
     code: String,
     simSlot: Int,
-    isSimulation: Boolean,
     onRequestCancel: () -> Unit
 ) {
     Column(
@@ -394,7 +389,6 @@ private fun ActiveSessionContent(
     response: ParsedUssdResponse,
     flow: UssdSessionFlow?,
     history: List<StepLogItem>,
-    isSimulation: Boolean,
     isAutomating: Boolean,
     pendingInputs: List<String>,
     onSubmit: (String) -> Unit,
@@ -608,9 +602,10 @@ private fun ActiveSessionContent(
                 }
             }
             UssdResponseType.CONFIRMATION -> {
-                ConfirmationView(
-                    options = response.options,
-                    onSelect = onSubmit
+                ConfirmationCard(
+                    response = response,
+                    onConfirm = { option -> onSubmit(option) },
+                    onCancel = { option -> onSubmit(option) }
                 )
             }
             UssdResponseType.INPUT_PROMPT, UssdResponseType.INFO, UssdResponseType.SUCCESS_RESULT, UssdResponseType.ERROR_RESULT -> {
@@ -897,8 +892,7 @@ private fun ConfirmationView(
 private fun SubmittingContent(
     input: String,
     step: Int,
-    flow: UssdSessionFlow?,
-    isSimulation: Boolean
+    flow: UssdSessionFlow?
 ) {
     Column(
         modifier = Modifier
@@ -940,7 +934,6 @@ private fun CompletedContent(
     history: List<StepLogItem>,
     isSuccess: Boolean,
     durationMs: Long,
-    isSimulation: Boolean,
     onDone: () -> Unit
 ) {
     val context = LocalContext.current

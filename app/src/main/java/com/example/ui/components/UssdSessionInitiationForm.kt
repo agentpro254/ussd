@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,35 +21,35 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.SimCard
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -67,53 +68,43 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.PreloadedUssdRepository
 import com.example.data.model.SimCardInfo
+import com.example.data.model.UssdCategoryItem
+import com.example.data.model.UssdCodeItem
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.EmeraldSuccessBg
-import com.example.ui.theme.SlateBorder
-import com.example.ui.theme.SlateMedium
-import com.example.ui.theme.TealAccent
 import com.example.ui.theme.TealContainer
 import com.example.ui.theme.TealPrimary
 
 /**
- * Clean, structured Form Component for inputting USSD code strings and configuring
- * session initiation parameters (SIM slot, sequence automation steps, execution mode).
+ * Clean, structured Form Component for inputting USSD code strings with on-demand
+ * interactive category selection (Safaricom, Airtel, Banking, Government, Utilities),
+ * SIM slot configuration, and live carrier session execution.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UssdSessionInitiationForm(
     codeText: String,
     onCodeChange: (String) -> Unit,
-    onInitiateSession: (code: String, simSlot: Int, automatedSteps: List<String>, isSimulated: Boolean) -> Unit,
+    onInitiateSession: (code: String, simSlot: Int, automatedSteps: List<String>) -> Unit,
     simCards: List<SimCardInfo>,
     selectedSimSlot: Int,
     onSelectSimSlot: (Int) -> Unit,
-    isDemoMode: Boolean,
-    onToggleDemoMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var sequenceStepsInput by remember { mutableStateOf("") }
-    var isAdvancedOptionsExpanded by remember { mutableStateOf(false) }
+    var isCategorySelectorOpen by remember { mutableStateOf(false) }
+    var selectedCategoryId by remember { mutableStateOf<String?>("cat_safaricom") }
 
     val isValidUssd = remember(codeText) {
         val trimmed = codeText.trim()
         trimmed.startsWith("*") && trimmed.endsWith("#") && trimmed.length >= 3
     }
 
-    val parsedSteps = remember(sequenceStepsInput) {
-        if (sequenceStepsInput.isBlank()) emptyList()
-        else sequenceStepsInput.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    val categories = remember { PreloadedUssdRepository.allCategories }
+    val activeCategory = remember(selectedCategoryId) {
+        categories.firstOrNull { it.id == selectedCategoryId } ?: categories.firstOrNull()
     }
-
-    val presetCodes = listOf(
-        "*123#" to "Balance",
-        "*185#" to "MoMo",
-        "*131#" to "Airtime",
-        "*141#" to "Data",
-        "*737#" to "Banking",
-        "*334#" to "M-Pesa"
-    )
 
     Card(
         modifier = modifier
@@ -162,7 +153,7 @@ fun UssdSessionInitiationForm(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Execute live code or automated multi-step sequence",
+                            text = "Execute live code or browse carrier directories",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -187,7 +178,7 @@ fun UssdSessionInitiationForm(
                         .testTag("ussd_code_input_field"),
                     placeholder = {
                         Text(
-                            text = "e.g. *185# or *131*1#",
+                            text = "e.g. *334# or *222#",
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
@@ -208,7 +199,7 @@ fun UssdSessionInitiationForm(
                                 val finalCode = if (!codeText.endsWith("#") && codeText.startsWith("*")) {
                                     "$codeText#"
                                 } else codeText
-                                onInitiateSession(finalCode, selectedSimSlot, parsedSteps, isDemoMode)
+                                onInitiateSession(finalCode, selectedSimSlot, emptyList())
                             }
                         }
                     ),
@@ -265,107 +256,167 @@ fun UssdSessionInitiationForm(
                 }
             }
 
-            // Quick Preset Codes Chips
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Quick Carrier Codes",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Medium
-                )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+            // Click-to-show Selection of Safaricom, Airtel, Banking, Government & Utilities
+            Surface(
+                onClick = { isCategorySelectorOpen = !isCategorySelectorOpen },
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("toggle_carrier_selection_btn")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    presetCodes.forEach { (preset, label) ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onCodeChange(preset) }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = preset,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    color = TealPrimary
-                                )
-                                Text(
-                                    text = "· $label",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(text = activeCategory?.icon ?: "📁", fontSize = 18.sp)
+                        Column {
+                            Text(
+                                text = if (isCategorySelectorOpen) "Select Service or Carrier" else "Browse Codes: ${activeCategory?.name ?: "Safaricom"}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (isCategorySelectorOpen) "Tap any code below to select" else "Click to show Safaricom, Government, Banks & more",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
+
+                    Icon(
+                        imageVector = if (isCategorySelectorOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Expand categories",
+                        tint = TealPrimary,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
 
-            // SIM Slot & Carrier Configuration
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Active SIM Slot",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(
+            // Expanded Selections Panel (Shown on Click)
+            AnimatedVisibility(
+                visible = isCategorySelectorOpen,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val simList = if (simCards.isNotEmpty()) simCards else listOf(
-                        SimCardInfo(slotIndex = 0, carrierName = "Primary SIM", displayName = "SIM 1"),
-                        SimCardInfo(slotIndex = 1, carrierName = "Secondary SIM", displayName = "SIM 2")
-                    )
-
-                    simList.take(2).forEach { sim ->
-                        val isSelected = selectedSimSlot == sim.slotIndex
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { onSelectSimSlot(sim.slotIndex) }
-                                .testTag("sim_slot_${sim.slotIndex}_btn"),
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) TealContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                            border = BorderStroke(
-                                1.5.dp,
-                                if (isSelected) TealPrimary else MaterialTheme.colorScheme.outlineVariant
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // Category Selection Tabs
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(categories) { cat ->
+                            val isSelected = cat.id == selectedCategoryId
+                            Surface(
+                                onClick = { selectedCategoryId = cat.id },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) TealPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                ),
+                                modifier = Modifier.testTag("cat_tab_${cat.id}")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.SimCard,
-                                    contentDescription = null,
-                                    tint = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = cat.icon, fontSize = 14.sp)
                                     Text(
-                                        text = "SIM ${sim.slotIndex + 1}",
+                                        text = cat.name,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurface
                                     )
-                                    Text(
-                                        text = sim.carrierName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1
-                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Codes List for Selected Category
+                    if (activeCategory != null) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            activeCategory.codes.forEach { codeItem ->
+                                val isChosen = codeText == codeItem.code
+                                Surface(
+                                    onClick = {
+                                        onCodeChange(codeItem.code)
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isChosen) TealContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(
+                                        width = if (isChosen) 1.dp else 0.5.dp,
+                                        color = if (isChosen) TealPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("select_code_${codeItem.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(text = codeItem.icon, fontSize = 16.sp)
+                                            Column {
+                                                Text(
+                                                    text = codeItem.name,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Text(
+                                                    text = codeItem.description,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = TealPrimary.copy(alpha = 0.1f)
+                                        ) {
+                                            Text(
+                                                text = codeItem.code,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = TealPrimary,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -376,8 +427,8 @@ fun UssdSessionInitiationForm(
             // Live USSD Status Indicator Card
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = TealPrimary.copy(alpha = 0.08f),
-                border = BorderStroke(1.dp, TealPrimary.copy(alpha = 0.2f))
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
             ) {
                 Row(
                     modifier = Modifier
@@ -389,18 +440,18 @@ fun UssdSessionInitiationForm(
                     Icon(
                         imageVector = Icons.Default.Sensors,
                         contentDescription = null,
-                        tint = TealPrimary,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
                     Column {
                         Text(
-                            text = "Direct Carrier Connection",
+                            text = "Direct In-App Execution",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = TealPrimary
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Codee displays live responses interactively without automated inputs.",
+                            text = "USSD executes directly inside the app with full sender/recipient details.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -415,7 +466,7 @@ fun UssdSessionInitiationForm(
                         val finalCode = if (!codeText.endsWith("#") && codeText.startsWith("*")) {
                             "$codeText#"
                         } else codeText
-                        onInitiateSession(finalCode, selectedSimSlot, emptyList(), isDemoMode)
+                        onInitiateSession(finalCode, selectedSimSlot, emptyList())
                     }
                 },
                 modifier = Modifier
@@ -425,7 +476,7 @@ fun UssdSessionInitiationForm(
                 enabled = codeText.isNotBlank(),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = TealPrimary,
+                    containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = Color.White
                 )
             ) {

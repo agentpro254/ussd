@@ -52,6 +52,10 @@ object PermissionManager {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    fun checkTelephonyPermissions(context: Context): Boolean {
+        return isCallPhoneGranted(context) && isReadPhoneStateGranted(context)
+    }
+
     fun isPostNotificationsGranted(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             ContextCompat.checkSelfPermission(
