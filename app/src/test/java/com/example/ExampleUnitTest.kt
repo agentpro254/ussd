@@ -44,7 +44,7 @@ class ExampleUnitTest {
             1. Send Money
             2. Buy Airtime
             3. Pay Utility Bills
-            0. Exit
+            0. Back
         """.trimIndent()
 
         val parsed = UssdParser.parse(rawUssd)

@@ -32,6 +32,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,12 +41,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.ui.components.OnboardingSetupGuideDialog
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.RoutinesScreen
@@ -120,8 +123,15 @@ fun CodeeAppContent(
     viewModel: CodeeViewModel,
     onRequestPhonePermissions: () -> Unit
 ) {
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(CodeeTab.CODES) }
     var showCreateRoutineDialog by remember { mutableStateOf(false) }
+
+    // First-time onboarding guide state
+    val prefs = remember { context.getSharedPreferences("codee_user_prefs", android.content.Context.MODE_PRIVATE) }
+    var showFirstTimeOnboarding by remember {
+        mutableStateOf(!prefs.getBoolean("has_completed_onboarding", false))
+    }
 
     // Active in-app USSD interactive session state
     var activeSessionCode by remember { mutableStateOf<String?>(null) }
@@ -134,6 +144,13 @@ fun CodeeAppContent(
     val favoriteCodeIds by viewModel.favoriteCodeIds.collectAsState()
     val currentThemeColor by viewModel.themeColor.collectAsState()
     val currentDisplayScale by viewModel.displayScale.collectAsState()
+
+    // Auto-request permissions on app start if CALL_PHONE is not yet granted
+    LaunchedEffect(Unit) {
+        if (!permissionStatus.isCallPhoneGranted) {
+            onRequestPhonePermissions()
+        }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -199,6 +216,8 @@ fun CodeeAppContent(
             when (selectedTab) {
                 CodeeTab.CODES -> {
                     HomeScreen(
+                        permissionStatus = permissionStatus,
+                        onRequestPhonePermissions = onRequestPhonePermissions,
                         onDialCode = { code, title, subId, slotIndex ->
                             // Launches internal in-app USSD viewer on selected SIM
                             activeSessionCode = code
@@ -292,6 +311,18 @@ fun CodeeAppContent(
                     }
                 )
             }
+        }
+
+        // First-Time Onboarding & Setup Guide Dialog
+        if (showFirstTimeOnboarding) {
+            OnboardingSetupGuideDialog(
+                status = permissionStatus,
+                onRequestPhonePermissions = onRequestPhonePermissions,
+                onDismiss = {
+                    showFirstTimeOnboarding = false
+                    prefs.edit().putBoolean("has_completed_onboarding", true).apply()
+                }
+            )
         }
     }
 }

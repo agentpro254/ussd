@@ -51,15 +51,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.OutlinedButton
 import com.example.permissions.PermissionManager
+import com.example.ui.components.OnboardingSetupGuideDialog
+import com.example.ui.components.PermissionGateDialog
 import com.example.ui.components.SimSelectionDialog
+import com.example.ui.theme.AmberWarning
+import com.example.ui.theme.AmberWarningBg
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.EmeraldSuccessBg
 import com.example.ui.theme.TealPrimary
 import com.example.ui.theme.TealPrimaryDark
+import com.example.ui.viewmodel.PermissionStatus
+import com.example.utils.AccessibilityHelper
 
 @Composable
 fun HomeScreen(
+    permissionStatus: PermissionStatus,
+    onRequestPhonePermissions: () -> Unit,
     onDialCode: (code: String, title: String, subscriptionId: Int, slotIndex: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -69,6 +81,8 @@ fun HomeScreen(
     var pendingDialCode by remember { mutableStateOf("") }
     var pendingDialTitle by remember { mutableStateOf("") }
     var showSimSelectDialog by remember { mutableStateOf(false) }
+    var showPermissionGateDialog by remember { mutableStateOf(false) }
+    var showSetupGuideDialog by remember { mutableStateOf(false) }
 
     val availableSims = remember { PermissionManager.getAvailableSimCards(context) }
 
@@ -91,6 +105,16 @@ fun HomeScreen(
     fun initiateDial(code: String, title: String = "") {
         val clean = code.trim()
         if (clean.isBlank()) return
+
+        val isCallGranted = PermissionManager.isCallPhoneGranted(context)
+        val isAccessGranted = AccessibilityHelper.isAccessibilityServiceEnabled(context)
+
+        if (!isCallGranted || !isAccessGranted) {
+            // Fail-Safe Pre-Dial Gate: Show permission popup dialog
+            showPermissionGateDialog = true
+            return
+        }
+
         pendingDialCode = clean
         pendingDialTitle = if (title.isNotBlank()) title else clean
         showSimSelectDialog = true
@@ -149,7 +173,8 @@ fun HomeScreen(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = EmeraldSuccessBg,
-                    border = BorderStroke(1.dp, EmeraldSuccess.copy(alpha = 0.3f))
+                    border = BorderStroke(1.dp, EmeraldSuccess.copy(alpha = 0.3f)),
+                    modifier = Modifier.clickable { showSetupGuideDialog = true }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -163,11 +188,104 @@ fun HomeScreen(
                                 .background(EmeraldSuccess)
                         )
                         Text(
-                            text = "Live USSD",
+                            text = "Setup Guide",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = EmeraldSuccess
                         )
+                    }
+                }
+            }
+
+            // Prominent Permission Gate Banners at Top of HomeScreen
+            if (!permissionStatus.isCallPhoneGranted) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = AmberWarningBg),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = AmberWarning,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Phone Permission Required",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Grant Call permission to dial USSD codes without failure.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Button(
+                            onClick = onRequestPhonePermissions,
+                            colors = ButtonDefaults.buttonColors(containerColor = AmberWarning),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("home_grant_phone_btn")
+                        ) {
+                            Text("Grant", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            } else if (!permissionStatus.isAccessibilityGranted) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = TealPrimary.copy(alpha = 0.08f)),
+                    border = BorderStroke(1.dp, TealPrimary.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Accessibility,
+                            contentDescription = null,
+                            tint = TealPrimary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Accessibility Required",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "For USSD to work, please enable 'Codee USSD Helper' in Accessibility settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Button(
+                            onClick = { AccessibilityHelper.openAccessibilitySettings(context) },
+                            colors = ButtonDefaults.buttonColors(containerColor = TealPrimary),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("home_enable_accessibility_btn")
+                        ) {
+                            Text("Enable Now", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -420,6 +538,24 @@ fun HomeScreen(
                     )
                 },
                 onDismiss = { showSimSelectDialog = false }
+            )
+        }
+
+        // Permission Gate Dialog (Fail-Safe)
+        if (showPermissionGateDialog) {
+            PermissionGateDialog(
+                status = permissionStatus,
+                onRequestPhonePermissions = onRequestPhonePermissions,
+                onDismiss = { showPermissionGateDialog = false }
+            )
+        }
+
+        // 3-Step Setup Guide Dialog
+        if (showSetupGuideDialog) {
+            OnboardingSetupGuideDialog(
+                status = permissionStatus,
+                onRequestPhonePermissions = onRequestPhonePermissions,
+                onDismiss = { showSetupGuideDialog = false }
             )
         }
     }
