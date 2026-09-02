@@ -10,6 +10,7 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.receiver.UssdResponseReceiver
+import com.example.service.CodeeAccessibilityService
 
 class SimpleUssdHandler {
 
@@ -52,6 +53,13 @@ class SimpleUssdHandler {
         UssdResponseReceiver.onResponse = { response, isFinal ->
             Log.d(TAG, "📡 Broadcast receiver got USSD: $response (final=$isFinal)")
             handleResponse(response, isFinal || isTerminalResponse(response))
+        }
+
+        // Register with Accessibility Service for USSD dialog captures
+        CodeeAccessibilityService.setUssdCallback { response ->
+            Log.d(TAG, "♿ Accessibility Service captured USSD: $response")
+            val isFinal = isTerminalResponse(response)
+            handleResponse(response, isFinal)
         }
 
         // Check CALL_PHONE runtime permission
@@ -139,6 +147,12 @@ class SimpleUssdHandler {
 
         responseCallback = onResponse
 
+        // Try Accessibility Service response first
+        if (CodeeAccessibilityService.sendUssdResponse(trimmed)) {
+            Log.d(TAG, "✅ Response sent via Accessibility Service: '$trimmed'")
+            return
+        }
+
         val baseTelephony = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
         if (baseTelephony == null) {
             handleResponse("❌ Error: Telephony service unavailable.", isFinal = true)
@@ -200,6 +214,7 @@ class SimpleUssdHandler {
         if (isFinal) {
             isSessionActive = false
             UssdResponseReceiver.onResponse = null
+            CodeeAccessibilityService.clearCallbacks()
         }
     }
 
@@ -209,6 +224,7 @@ class SimpleUssdHandler {
         activeSubId = -1
         responseCallback = null
         UssdResponseReceiver.onResponse = null
+        CodeeAccessibilityService.clearCallbacks()
     }
 
     private fun formatUssdFailure(failureCode: Int): String {

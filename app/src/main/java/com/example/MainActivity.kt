@@ -1,7 +1,6 @@
 package com.example
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -13,11 +12,12 @@ import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Phone
@@ -29,7 +29,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,7 +37,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -58,7 +56,7 @@ import com.example.ui.theme.TealPrimary
 import com.example.ui.viewmodel.CodeeViewModel
 
 enum class CodeeTab(val title: String, val icon: ImageVector) {
-    CODES("USSD Codes", Icons.Default.Phone),
+    CODES("USSD Dial", Icons.Default.Phone),
     HISTORY("SMS History", Icons.Default.History),
     CUSTOM("Custom", Icons.Default.Star),
     TRUST("Safety & Info", Icons.Default.Shield)
@@ -83,7 +81,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            CodeeTheme {
+            val themeColor by viewModel.themeColor.collectAsState()
+            val displayScale by viewModel.displayScale.collectAsState()
+
+            CodeeTheme(
+                themeColor = themeColor,
+                displayScale = displayScale
+            ) {
                 CodeeAppContent(
                     viewModel = viewModel,
                     onRequestPhonePermissions = ::requestPhonePermissions
@@ -126,11 +130,10 @@ fun CodeeAppContent(
     var activeSessionSlotIndex by remember { mutableStateOf(0) }
 
     val savedRoutines by viewModel.savedRoutines.collectAsState()
-    val historyItems by viewModel.historyItems.collectAsState()
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val favoriteCodeIds by viewModel.favoriteCodeIds.collectAsState()
-    val dialerMode by viewModel.selectedDialerMode.collectAsState()
-    val requireDialConfirmation by viewModel.requireDialConfirmation.collectAsState()
+    val currentThemeColor by viewModel.themeColor.collectAsState()
+    val currentDisplayScale by viewModel.displayScale.collectAsState()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -145,56 +148,27 @@ fun CodeeAppContent(
         }
     }
 
-    // If an in-app USSD session is active, show the UssdSessionScreen directly!
-    if (activeSessionCode != null) {
-        UssdSessionScreen(
-            code = activeSessionCode!!,
-            title = activeSessionTitle,
-            subscriptionId = activeSessionSubId,
-            simSlotIndex = activeSessionSlotIndex,
-            onClose = {
-                activeSessionCode = null
-                activeSessionTitle = ""
-                activeSessionSubId = -1
-                activeSessionSlotIndex = 0
-            },
-            onSessionFinished = { code, title, rawResponse ->
-                viewModel.logCompletedSession(code, title, rawResponse)
-            }
-        )
-    } else {
+    Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             bottomBar = {
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 6.dp
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 ) {
-                    CodeeTab.values().forEach { tab ->
+                    CodeeTab.entries.forEach { tab ->
                         val isSelected = selectedTab == tab
                         val isPrimaryTab = tab == CodeeTab.CODES
-
                         NavigationBarItem(
                             selected = isSelected,
                             onClick = { selectedTab = tab },
                             icon = {
                                 if (isPrimaryTab) {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = if (isSelected) TealPrimary else TealPrimary.copy(alpha = 0.14f),
-                                        modifier = Modifier.size(34.dp)
-                                    ) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.fillMaxSize()
-                                        ) {
-                                            Icon(
-                                                imageVector = tab.icon,
-                                                contentDescription = tab.title,
-                                                tint = if (isSelected) Color.White else TealPrimary,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
+                                    Icon(
+                                        imageVector = tab.icon,
+                                        contentDescription = tab.title,
+                                        tint = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
                                 } else {
                                     Icon(
                                         imageVector = tab.icon,
@@ -232,17 +206,6 @@ fun CodeeAppContent(
                             activeSessionSubId = subId
                             activeSessionSlotIndex = slotIndex
                         },
-                        savedCustomCodes = savedRoutines,
-                        favoriteCodeIds = favoriteCodeIds,
-                        onToggleFavoriteCode = { viewModel.toggleFavoriteCode(it) },
-                        onSaveCustomCode = { title, code, cat, desc ->
-                            viewModel.saveRoutine(
-                                title = title,
-                                code = code,
-                                category = cat,
-                                description = desc
-                            )
-                        },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -274,14 +237,12 @@ fun CodeeAppContent(
                 CodeeTab.TRUST -> {
                     TrustCenterScreen(
                         status = permissionStatus,
-                        dialerMode = dialerMode,
-                        onSelectDialerMode = { viewModel.setDialerMode(it) },
-                        requireDialConfirmation = requireDialConfirmation,
-                        onToggleRequireConfirmation = { viewModel.setRequireDialConfirmation(it) },
-                        onStopAllSessions = { viewModel.stopAllSessions() },
-                        onClearCache = { viewModel.clearCache() },
                         onRefreshPermissions = { viewModel.refreshPermissions() },
                         onRequestPhonePermissions = onRequestPhonePermissions,
+                        currentThemeColor = currentThemeColor,
+                        onSelectThemeColor = { viewModel.setThemeColor(it) },
+                        currentDisplayScale = currentDisplayScale,
+                        onSelectDisplayScale = { viewModel.setDisplayScale(it) },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -301,6 +262,33 @@ fun CodeeAppContent(
                             description = desc
                         )
                         showCreateRoutineDialog = false
+                    }
+                )
+            }
+        }
+
+        // Full-screen in-app live USSD session view
+        AnimatedVisibility(
+            visible = activeSessionCode != null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+        ) {
+            activeSessionCode?.let { code ->
+                UssdSessionScreen(
+                    code = code,
+                    title = activeSessionTitle,
+                    subscriptionId = activeSessionSubId,
+                    simSlotIndex = activeSessionSlotIndex,
+                    onClose = {
+                        activeSessionCode = null
+                        activeSessionTitle = ""
+                    },
+                    onSessionFinished = { finishedCode, summary, rawText ->
+                        viewModel.logCompletedSession(
+                            code = finishedCode,
+                            title = if (activeSessionTitle.isNotBlank()) activeSessionTitle else summary,
+                            rawResponse = rawText
+                        )
                     }
                 )
             }

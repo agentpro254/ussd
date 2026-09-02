@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">codee</string>
-    <string name="accessibility_service_description">codee uses Accessibility Service to read USSD dialogs and automate multi-step sessions securely on your device.</string>
-    <string name="accessibility_service_label">codee USSD Automation Service</string>
+    <string name="accessibility_service_label">Codee USSD Helper</string>
+    <string name="accessibility_service_description">Codee Accessibility Service helps you interact with USSD menus.\n\nThis service:\n• Reads USSD responses from your carrier\n• Allows you to select menu options\n• Helps complete transactions securely\n\nYour data is never stored or shared. This service only works when you initiate a USSD session.</string>
 </resources>

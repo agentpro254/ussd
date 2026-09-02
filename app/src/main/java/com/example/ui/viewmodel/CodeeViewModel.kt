@@ -16,6 +16,8 @@ import com.example.data.repository.SmsReaderRepository
 import com.example.engine.SmartUssdFlowEngine
 import com.example.engine.UssdSessionManager
 import com.example.permissions.PermissionManager
+import com.example.ui.theme.AppThemeColor
+import com.example.ui.theme.DisplayScale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +83,36 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isDemoMode = MutableStateFlow(false)
     val isDemoMode: StateFlow<Boolean> = _isDemoMode.asStateFlow()
+
+    private val _themeColor = MutableStateFlow(
+        try {
+            val saved = prefs.getString("theme_color", AppThemeColor.TEAL.name)
+            AppThemeColor.valueOf(saved ?: AppThemeColor.TEAL.name)
+        } catch (e: Exception) {
+            AppThemeColor.TEAL
+        }
+    )
+    val themeColor: StateFlow<AppThemeColor> = _themeColor.asStateFlow()
+
+    fun setThemeColor(color: AppThemeColor) {
+        _themeColor.value = color
+        prefs.edit().putString("theme_color", color.name).apply()
+    }
+
+    private val _displayScale = MutableStateFlow(
+        try {
+            val saved = prefs.getString("display_scale", DisplayScale.STANDARD.name)
+            DisplayScale.valueOf(saved ?: DisplayScale.STANDARD.name)
+        } catch (e: Exception) {
+            DisplayScale.STANDARD
+        }
+    )
+    val displayScale: StateFlow<DisplayScale> = _displayScale.asStateFlow()
+
+    fun setDisplayScale(scale: DisplayScale) {
+        _displayScale.value = scale
+        prefs.edit().putString("display_scale", scale.name).apply()
+    }
 
     private val _selectedDialerMode = MutableStateFlow(
         try {
