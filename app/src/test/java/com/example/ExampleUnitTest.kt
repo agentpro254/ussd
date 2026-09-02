@@ -38,6 +38,17 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun testRawReceivedKshParsing() {
+        val raw = "You have received Ksh 1,000.00 from MARY WANJIKU 0723456789..."
+        val parsed = TransactionParser.parseTransaction(raw)
+        assertNotNull(parsed)
+        assertEquals(TransactionType.RECEIVED, parsed!!.type)
+        assertEquals("KES 1,000.00", parsed.amount)
+        assertEquals("Mary Wanjiku", parsed.sender)
+        assertEquals("0723456789", parsed.phoneNumber)
+    }
+
+    @Test
     fun testMenuParsing() {
         val rawUssd = """
             Welcome to MoMo:

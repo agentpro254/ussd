@@ -75,34 +75,34 @@ class SimpleUssdHandler {
             return
         }
 
-        // 1. First attempt direct ITelephony reflection
-        val reflectionInitiated = ITelephonyReflection.sendUssdViaReflection(
-            context = context,
-            ussdCode = clean,
-            subId = subscriptionId,
-            callback = object : ITelephonyReflection.ReflectionCallback {
-                override fun onSuccess(response: String) {
-                    Log.d(TAG, "⚡ Direct ITelephony response received: $response")
-                    val isFinal = isTerminalResponse(response)
-                    handleResponse(response, isFinal)
-                }
+        // 1. Attempt direct ITelephony reflection first
+        var reflectionHandled = false
+        try {
+            reflectionHandled = ITelephonyReflection.sendUssdViaReflection(
+                context = context,
+                ussdCode = clean,
+                subId = subscriptionId,
+                callback = object : ITelephonyReflection.ReflectionCallback {
+                    override fun onSuccess(response: String) {
+                        Log.d(TAG, "⚡ Direct ITelephony response received: $response")
+                        Log.d("ACCESS_DEBUG", "Found dialog: $response")
+                        val isFinal = isTerminalResponse(response)
+                        handleResponse(response, isFinal)
+                    }
 
-                override fun onError(error: String) {
-                    Log.w(TAG, "⚡ ITelephony reflection error: $error")
-                    // If error or unhandled, let accessibility or timeout handle it
+                    override fun onError(error: String) {
+                        Log.w(TAG, "⚡ ITelephony reflection error: $error")
+                    }
                 }
-            }
-        )
-
-        if (reflectionInitiated) {
-            Log.d(TAG, "⚡ Direct ITelephony reflection executed successfully for $clean")
-            onResponse("Waiting for carrier response...", false)
-            return
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "ITelephony reflection invocation failed: ${e.message}")
         }
 
-        // 2. Fallback to Hidden Dialing via TransparentActivity + CodeeAccessibilityService
+        // 2. Always launch hidden dialing via TransparentActivity + CodeeAccessibilityService
+        // to guarantee carrier network execution and prevent getting stuck if reflection is ignored by OEM
         try {
-            Log.d(TAG, "🚀 Initiating hidden dialing via TransparentActivity: $clean (slotIndex=$slotIndex, subId=$subscriptionId)")
+            Log.d(TAG, "🚀 Initiating dialing via TransparentActivity: $clean (slotIndex=$slotIndex, subId=$subscriptionId, reflection=$reflectionHandled)")
             
             val intent = Intent(context, com.example.ui.TransparentActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -113,7 +113,7 @@ class SimpleUssdHandler {
 
             context.startActivity(intent)
 
-            // Notify UI immediately that the call is launched and waiting for carrier response
+            // Notify UI that call is launched and waiting for carrier response
             onResponse("Waiting for carrier response...", false)
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException launching TransparentActivity", e)

@@ -108,9 +108,6 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // Prevent processing if already working on something
-        if (isProcessing) return
-
         val pkg = event.packageName?.toString() ?: ""
         val eventType = event.eventType
 
@@ -118,52 +115,71 @@ class CodeeAccessibilityService : AccessibilityService() {
                 pkg.contains("phone", ignoreCase = true) ||
                 pkg.contains("dialer", ignoreCase = true) ||
                 pkg.contains("incall", ignoreCase = true) ||
-                pkg.contains("telecom", ignoreCase = true)
+                pkg.contains("telecom", ignoreCase = true) ||
+                pkg.contains("mmi", ignoreCase = true) ||
+                pkg == "android"
 
+        // Log diagnostic events for debugging
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
-            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
             if (isDialerEvent) {
-                Log.d(TAG, "📞 Dialer window event from '$pkg' (type=$eventType)")
-                // [PREVENT POPUP AGAIN]: Bring app to front so user stays inside our app UI
+                Log.d("ACCESS_DEBUG", "Dialer event: type=$eventType, pkg=$pkg")
+                // Cover system popup immediately
                 bringAppToFront()
             }
         }
 
         // 1. Try event source
         val eventSource = event.source
-        if (eventSource != null && isUssdDialog(eventSource)) {
-            val ussdText = extractUssdText(eventSource)
-            if (!ussdText.isNullOrEmpty()) {
-                Log.d(TAG, "Captured USSD from event source in pkg='$pkg'")
-                processUssdResponse(ussdText, eventSource)
+        if (eventSource != null) {
+            val text = extractUssdText(eventSource)
+            if (!text.isNullOrEmpty() && (isDialerEvent || isUssdDialog(eventSource) || hasUssdKeywords(text))) {
+                Log.d("ACCESS_DEBUG", "Found dialog: " + text)
+                processUssdResponse(text, eventSource)
                 return
             }
         }
 
         // 2. Try root in active window
         val root = rootInActiveWindow
-        if (root != null && isUssdDialog(root)) {
-            val ussdText = extractUssdText(root)
-            if (!ussdText.isNullOrEmpty()) {
-                Log.d(TAG, "Captured USSD from rootInActiveWindow in pkg='${root.packageName}'")
-                processUssdResponse(ussdText, root)
+        if (root != null) {
+            val text = extractUssdText(root)
+            val rootPkg = root.packageName?.toString() ?: ""
+            val isRootDialer = DIALER_PACKAGES.contains(rootPkg) ||
+                    rootPkg.contains("phone", ignoreCase = true) ||
+                    rootPkg.contains("dialer", ignoreCase = true) ||
+                    rootPkg.contains("incall", ignoreCase = true) ||
+                    rootPkg.contains("telecom", ignoreCase = true) ||
+                    rootPkg == "android"
+
+            if (!text.isNullOrEmpty() && (isRootDialer || isUssdDialog(root) || hasUssdKeywords(text))) {
+                Log.d("ACCESS_DEBUG", "Found dialog: " + text)
+                processUssdResponse(text, root)
                 return
             }
         }
 
-        // 3. Search interactive background windows (for hidden dialing strategy)
+        // 3. Search interactive background windows (for hidden dialing / covered dialog strategy)
         try {
-            for (window in windows) {
+            val currentWindows = windows
+            for (window in currentWindows) {
                 val windowRoot = window.root ?: continue
-                if (isUssdDialog(windowRoot)) {
-                    val ussdText = extractUssdText(windowRoot)
-                    if (!ussdText.isNullOrEmpty()) {
-                        Log.d(TAG, "Captured USSD from background window in pkg='${windowRoot.packageName}'")
-                        processUssdResponse(ussdText, windowRoot)
-                        return
-                    }
+                val windowPkg = windowRoot.packageName?.toString() ?: ""
+                val text = extractUssdText(windowRoot)
+
+                val isWinDialer = DIALER_PACKAGES.contains(windowPkg) ||
+                        windowPkg.contains("phone", ignoreCase = true) ||
+                        windowPkg.contains("dialer", ignoreCase = true) ||
+                        windowPkg.contains("incall", ignoreCase = true) ||
+                        windowPkg.contains("telecom", ignoreCase = true) ||
+                        windowPkg == "android"
+
+                if (!text.isNullOrEmpty() && (isWinDialer || isUssdDialog(windowRoot) || hasUssdKeywords(text))) {
+                    Log.d("ACCESS_DEBUG", "Found dialog: " + text)
+                    processUssdResponse(text, windowRoot)
+                    return
                 }
             }
         } catch (e: Exception) {
@@ -189,6 +205,32 @@ class CodeeAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun hasUssdKeywords(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("m-pesa") ||
+                lower.contains("safaricom") ||
+                lower.contains("airtel") ||
+                lower.contains("telkom") ||
+                lower.contains("balance") ||
+                lower.contains("account") ||
+                lower.contains("pin") ||
+                lower.contains("enter ") ||
+                lower.contains("reply") ||
+                lower.contains("select") ||
+                lower.contains("send money") ||
+                lower.contains("airtime") ||
+                lower.contains("bundles") ||
+                lower.contains("ksh") ||
+                lower.contains("kes") ||
+                lower.contains("con ") ||
+                lower.contains("end ") ||
+                text.lines().any { line ->
+                    val t = line.trim()
+                    t.startsWith("1.") || t.startsWith("1:") || t.startsWith("1 ") ||
+                    t.startsWith("0.") || t.startsWith("0:") || t.startsWith("0 ")
+                }
+    }
+
     private fun isUssdDialog(node: AccessibilityNodeInfo): Boolean {
         val packageName = node.packageName?.toString() ?: ""
 
@@ -197,7 +239,9 @@ class CodeeAccessibilityService : AccessibilityService() {
                 packageName.contains("phone", ignoreCase = true) ||
                 packageName.contains("dialer", ignoreCase = true) ||
                 packageName.contains("incall", ignoreCase = true) ||
-                packageName.contains("telecom", ignoreCase = true)
+                packageName.contains("telecom", ignoreCase = true) ||
+                packageName.contains("mmi", ignoreCase = true) ||
+                packageName == "android"
 
         // 2. Generic AlertDialog fallback (catches custom OEM dialog popups regardless of brand)
         val className = node.className?.toString() ?: ""
@@ -205,28 +249,19 @@ class CodeeAccessibilityService : AccessibilityService() {
                 className.contains("Dialog", ignoreCase = true) ||
                 className.contains("Alert", ignoreCase = true)
 
-        // 3. Check for typical USSD content indicators
+        // 3. Check for input field or send button inside the hierarchy
+        val hasInputOrSend = findInputField(node) != null || findSendButton(node) != null
+
+        // 4. Check for typical USSD content indicators
         val text = node.text?.toString() ?: ""
-        val hasUssdContent = text.contains("CON", ignoreCase = true) ||
-                text.contains("END", ignoreCase = true) ||
-                text.contains("*") ||
-                text.contains("#") ||
-                text.contains("M-PESA", ignoreCase = true) ||
-                text.contains("Safaricom", ignoreCase = true) ||
-                text.contains("Airtel", ignoreCase = true) ||
-                text.contains("Telkom", ignoreCase = true) ||
-                text.contains("balance", ignoreCase = true) ||
-                text.contains("PIN", ignoreCase = true) ||
-                text.contains("Reply", ignoreCase = true)
+        val hasUssdContent = hasUssdKeywords(text) || text.contains("*") || text.contains("#")
 
-        val hasText = !node.text.isNullOrEmpty() || node.childCount > 0
+        if (isDialog && hasInputOrSend) return true
+        if (isKnownDialer && hasInputOrSend) return true
+        if (isKnownDialer && (hasUssdContent || node.childCount > 0)) return true
+        if (isDialog && hasUssdContent) return true
 
-        // If session is active, be extra responsive
-        if (UssdSessionManager.isSessionActive() && (isDialog || hasUssdContent || isKnownDialer)) {
-            return true
-        }
-
-        return (isKnownDialer && (hasUssdContent || hasText)) || (isDialog && hasUssdContent) || (isDialog && isKnownDialer)
+        return false
     }
 
     private fun extractUssdText(node: AccessibilityNodeInfo): String? {
