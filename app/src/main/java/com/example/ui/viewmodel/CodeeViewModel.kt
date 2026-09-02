@@ -84,10 +84,10 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedDialerMode = MutableStateFlow(
         try {
-            val saved = prefs.getString("dialer_mode", DialerMode.CODEE_OVERLAY.name)
-            DialerMode.valueOf(saved ?: DialerMode.CODEE_OVERLAY.name)
+            val saved = prefs.getString("dialer_mode", DialerMode.SYSTEM_DIALER.name)
+            DialerMode.valueOf(saved ?: DialerMode.SYSTEM_DIALER.name)
         } catch (e: Exception) {
-            DialerMode.CODEE_OVERLAY
+            DialerMode.SYSTEM_DIALER
         }
     )
     val selectedDialerMode: StateFlow<DialerMode> = _selectedDialerMode.asStateFlow()
@@ -95,6 +95,69 @@ class CodeeViewModel(application: Application) : AndroidViewModel(application) {
     fun setDialerMode(mode: DialerMode) {
         _selectedDialerMode.value = mode
         prefs.edit().putString("dialer_mode", mode.name).apply()
+    }
+
+    /**
+     * Records a completed internal USSD session to local Room history.
+     */
+    fun logCompletedSession(code: String, title: String, rawResponse: String) {
+        val clean = code.trim()
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            val serviceLabel = if (title.isNotBlank()) title else clean
+            dao.insertHistory(
+                UssdHistoryItem(
+                    timestamp = System.currentTimeMillis(),
+                    ussdCode = clean,
+                    serviceName = serviceLabel,
+                    summary = if (rawResponse.length > 80) rawResponse.take(80) + "..." else rawResponse,
+                    responseSequence = "",
+                    amount = null,
+                    recipient = null,
+                    isSuccess = !rawResponse.contains("error", ignoreCase = true) && !rawResponse.contains("failed", ignoreCase = true),
+                    rawResponseText = rawResponse
+                )
+            )
+        }
+    }
+
+    /**
+     * Dials a USSD code using the Android System Phone Dialer (Intent.ACTION_DIAL).
+     * The user interacts with the standard phone dialer normally with ZERO background auto-dialing.
+     */
+    fun dialWithSystemDialer(code: String, title: String = "") {
+        val clean = code.trim()
+        if (clean.isBlank()) return
+        val context = getApplication<Application>()
+
+        try {
+            val encodedCode = android.net.Uri.encode(clean)
+            val intent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                data = android.net.Uri.parse("tel:$encodedCode")
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+
+            // Log user-initiated action to history
+            viewModelScope.launch {
+                val serviceLabel = if (title.isNotBlank()) title else clean
+                dao.insertHistory(
+                    UssdHistoryItem(
+                        timestamp = System.currentTimeMillis(),
+                        ussdCode = clean,
+                        serviceName = serviceLabel,
+                        summary = "Dialed via Phone App",
+                        responseSequence = "",
+                        amount = null,
+                        recipient = null,
+                        isSuccess = true,
+                        rawResponseText = ""
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CodeeViewModel", "Failed to launch phone dialer", e)
+        }
     }
 
     // Anti-Loop & Confirmation Controls

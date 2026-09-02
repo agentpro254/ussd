@@ -50,6 +50,17 @@ object NavigationDetector {
         "quitter", "annuler", "sortir", "fermer"
     )
 
+    private fun matchesWordPattern(text: String, patterns: List<String>): Boolean {
+        val lower = text.lowercase().trim()
+        return patterns.any { pattern ->
+            if (pattern.contains(" ")) {
+                lower.contains(pattern)
+            } else {
+                Regex("""\b${Regex.escape(pattern)}\b""").containsMatchIn(lower)
+            }
+        }
+    }
+
     /**
      * Inspects a list of options and separates regular selectable items from navigation controls.
      */
@@ -97,25 +108,25 @@ object NavigationDetector {
     }
 
     fun isBackOption(text: String, number: String): Boolean {
-        val hasBackKeyword = BACK_PATTERNS.any { text.contains(it) }
+        val hasBackKeyword = matchesWordPattern(text, BACK_PATTERNS)
         val isCommonBackNumber = number == "98" || (number == "0" && (hasBackKeyword || text.contains("back") || text.contains("rudi")))
         return hasBackKeyword || number == "98" || isCommonBackNumber
     }
 
     fun isNextOption(text: String, number: String): Boolean {
-        val hasNextKeyword = NEXT_PATTERNS.any { text.contains(it) }
+        val hasNextKeyword = matchesWordPattern(text, NEXT_PATTERNS)
         val isCommonNextNumber = number == "99" || number == "#" || number == "*"
         return hasNextKeyword || isCommonNextNumber
     }
 
     fun isExitOption(text: String, number: String): Boolean {
-        val hasExitKeyword = EXIT_PATTERNS.any { text.contains(it) }
+        val hasExitKeyword = matchesWordPattern(text, EXIT_PATTERNS)
         val isCommonExitNumber = number == "00" || (number == "0" && (hasExitKeyword || text.contains("exit") || text.contains("cancel") || text.contains("toka") || text.contains("futa") || text.contains("sitisha")))
         return hasExitKeyword || isCommonExitNumber
     }
 
     fun isMainOption(text: String, number: String): Boolean {
-        val hasMainKeyword = MAIN_PATTERNS.any { text.contains(it) }
+        val hasMainKeyword = matchesWordPattern(text, MAIN_PATTERNS)
         val isCommonMainNumber = (number == "0" || number == "00") && hasMainKeyword
         return hasMainKeyword || isCommonMainNumber
     }

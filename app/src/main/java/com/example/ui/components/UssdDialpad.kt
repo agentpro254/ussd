@@ -58,8 +58,6 @@ fun UssdDialpad(
     simCards: List<SimCardInfo> = emptyList(),
     selectedSimSlot: Int = 0,
     onSelectSimSlot: ((Int) -> Unit)? = null,
-    isDemoMode: Boolean = false,
-    onToggleDemoMode: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -162,14 +160,14 @@ fun UssdDialpad(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = if (isDemoMode) Icons.Default.PlayArrow else Icons.Default.Call,
+                        imageVector = Icons.Default.Call,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isDemoMode) "Run in Codee UI" else "Dial & Automate",
+                        text = "Execute USSD in Codee",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White

@@ -121,17 +121,12 @@ class SmartUssdFlowEngine {
             return
         }
 
-        // For menus, present options to the user with recommendation instead of silent automatic submission
+        // For menus, always present options directly to the user for manual selection - NO auto-advance!
         if (response.isMenu && response.options.isNotEmpty()) {
-            val suggested = findOptionForGoal(response.options, currentGoal)
-            val msg = if (suggested != null) {
-                "💡 Suggested: ${suggested.id}. ${suggested.label}"
-            } else {
-                "Please select an option:"
-            }
+            val msg = "Please select an option:"
             _statusMessage.value = msg
             onStatusUpdate?.invoke(msg)
-            showOptionsToUser(response, suggested)
+            showOptionsToUser(response, null)
             return
         }
 

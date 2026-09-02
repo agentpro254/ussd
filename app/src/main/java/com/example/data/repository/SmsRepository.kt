@@ -70,84 +70,11 @@ object SmsReaderRepository {
     }
 
     /**
-     * Parses real M-PESA SMS text into structured TransactionItem
+     * Parses real M-PESA SMS text into structured TransactionItem using the dedicated MpesaSmsParser.
      */
     fun parseMpesaSms(id: String, address: String, body: String, timestamp: Long): TransactionItem? {
-        if (body.isBlank()) return null
-
-        val codeRegex = Pattern.compile("([A-Z0-9]{8,12})\\s+Confirmed\\.", Pattern.CASE_INSENSITIVE)
-        val codeMatcher = codeRegex.matcher(body)
-        val mpesaCode = if (codeMatcher.find()) codeMatcher.group(1) ?: "MPESA" else "MPESA-${id.takeLast(6)}"
-
-        // Match amount: e.g. "Ksh1,500.00" or "Ksh 500.00" or "KES 200.00"
-        val amountRegex = Pattern.compile("(?:Ksh\\.?|KES)\\s*([0-9,]+(?:\\.[0-9]{2})?)", Pattern.CASE_INSENSITIVE)
-        val amountMatcher = amountRegex.matcher(body)
-        val amount = if (amountMatcher.find()) "KES ${amountMatcher.group(1)}" else "KES 0.00"
-
-        // Determine transaction type and parties
-        val lowerBody = body.lowercase()
-        val type: TransactionType
-        val recipientOrSender: String
-        var phone = ""
-
-        when {
-            lowerBody.contains("sent to") -> {
-                type = TransactionType.SENT
-                val sentRegex = Pattern.compile("sent to\\s+([^0-9]+)\\s*([0-9]+)?", Pattern.CASE_INSENSITIVE)
-                val m = sentRegex.matcher(body)
-                if (m.find()) {
-                    val name = m.group(1)?.trim() ?: "Recipient"
-                    phone = m.group(2)?.trim() ?: ""
-                    recipientOrSender = name
-                } else {
-                    recipientOrSender = "Recipient"
-                }
-            }
-            lowerBody.contains("received") || lowerBody.contains("you have received") -> {
-                type = TransactionType.RECEIVED
-                val recRegex = Pattern.compile("received\\s+(?:Ksh|KES)[^f]+from\\s+([^0-9]+)\\s*([0-9]+)?", Pattern.CASE_INSENSITIVE)
-                val m = recRegex.matcher(body)
-                if (m.find()) {
-                    recipientOrSender = m.group(1)?.trim() ?: "Sender"
-                    phone = m.group(2)?.trim() ?: ""
-                } else {
-                    recipientOrSender = "Sender"
-                }
-            }
-            lowerBody.contains("bought") && lowerBody.contains("airtime") -> {
-                type = TransactionType.AIRTIME
-                recipientOrSender = "Airtime Top-Up"
-            }
-            lowerBody.contains("paid to") -> {
-                type = TransactionType.BILL_PAYMENT
-                val payRegex = Pattern.compile("paid to\\s+([^\\.]+)", Pattern.CASE_INSENSITIVE)
-                val m = payRegex.matcher(body)
-                recipientOrSender = if (m.find()) m.group(1)?.trim() ?: "Merchant" else "Merchant"
-            }
-            lowerBody.contains("withdraw") -> {
-                type = TransactionType.WITHDRAWAL
-                recipientOrSender = "M-PESA Agent"
-            }
-            else -> {
-                type = TransactionType.OTHER
-                recipientOrSender = "M-PESA Service"
-            }
-        }
-
-        return TransactionItem(
-            id = id,
-            mpesaCode = mpesaCode,
-            type = type,
-            amount = amount,
-            recipientOrSender = recipientOrSender,
-            phoneNumber = phone,
-            timestamp = timestamp,
-            summary = body.take(120),
-            fullBody = body,
-            isVerifiedBySms = true,
-            isVerifiedByUssd = false,
-            source = "M-PESA SMS"
-        )
+        val parsed = com.example.data.parser.MpesaSmsParser.parse(body, timestamp) ?: return null
+        return com.example.data.parser.MpesaSmsParser.toTransactionItem(id, parsed)
     }
 
     private fun getSampleMpesaTransactions(): List<TransactionItem> {

@@ -1,16 +1,16 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,21 +25,32 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dialpad
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.SimCard
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,252 +60,376 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.SavedUssdRoutine
-import com.example.data.local.UssdHistoryItem
+import com.example.data.model.PreloadedUssdRepository
 import com.example.data.model.SimCardInfo
-import com.example.ui.components.SimSelectionBottomSheet
-import com.example.ui.components.UssdDialpad
+import com.example.data.model.UssdCodeItem
+import com.example.permissions.PermissionManager
+import com.example.ui.components.SimSelectionDialog
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.EmeraldSuccessBg
-import com.example.ui.theme.IndigoInfo
-import com.example.ui.theme.IndigoInfoBg
-import com.example.ui.theme.TealContainer
 import com.example.ui.theme.TealPrimary
 import com.example.ui.theme.TealPrimaryDark
-import com.example.ui.viewmodel.DialerMode
-import com.example.ui.viewmodel.PermissionStatus
 
-enum class HomeDialerOption(val title: String) {
-    KEYPAD("Keypad"),
-    RECENT_FLOWS("Recent Flows")
-}
-
-data class FlowStepDisplay(
-    val stepNumber: Int,
-    val label: String,
-    val value: String
-)
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
-    dialpadText: String,
-    onDialChar: (Char) -> Unit,
-    onDialDelete: () -> Unit,
-    onDialClear: () -> Unit,
-    onDialSubmit: () -> Unit,
-    onInitiateSession: (code: String, simSlot: Int, sequence: List<String>, isSimulation: Boolean) -> Unit,
-    simCards: List<SimCardInfo>,
-    selectedSimSlot: Int,
-    onSelectSimSlot: (Int) -> Unit,
-    isDemoMode: Boolean,
-    onToggleDemoMode: () -> Unit,
-    dialerMode: DialerMode = DialerMode.CODEE_OVERLAY,
-    onSelectDialerMode: ((DialerMode) -> Unit)? = null,
-    savedRoutines: List<SavedUssdRoutine> = emptyList(),
-    onRunRoutine: ((SavedUssdRoutine) -> Unit)? = null,
-    onToggleFavorite: ((SavedUssdRoutine) -> Unit)? = null,
-    onDeleteRoutine: ((SavedUssdRoutine) -> Unit)? = null,
+    onDialCode: (code: String, title: String, subscriptionId: Int, slotIndex: Int) -> Unit,
+    savedCustomCodes: List<SavedUssdRoutine> = emptyList(),
     favoriteCodeIds: Set<String> = emptySet(),
     onToggleFavoriteCode: ((String) -> Unit)? = null,
-    permissionStatus: PermissionStatus,
-    onOpenPermissionWizard: () -> Unit,
-    onCreateRoutineClick: (() -> Unit)? = null,
-    recentHistory: List<UssdHistoryItem> = emptyList(),
-    onNavigateToHistory: (() -> Unit)? = null,
-    onNavigateToSimulator: (() -> Unit)? = null,
+    onSaveCustomCode: ((title: String, code: String, category: String, description: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var showSimChooserDialog by remember { mutableStateOf(false) }
-    var pendingDialCode by remember { mutableStateOf<String?>(null) }
-    var pendingAutomatedSequence by remember { mutableStateOf<List<String>>(emptyList()) }
-    var selectedOption by remember { mutableStateOf(HomeDialerOption.KEYPAD) }
+    val context = LocalContext.current
 
-    val quickCodesList = remember {
-        listOf(
-            Pair("*334#", "M-PESA Menu"),
-            Pair("*144#", "Airtime Balance"),
-            Pair("*544#", "Data & Bundles"),
-            Pair("*247#", "Equity Eazzy"),
-            Pair("*185#", "Airtel Money"),
-            Pair("*123#", "Telkom Kenya"),
-            Pair("*522#", "KCB Banking"),
-            Pair("*667#", "Co-op M-Coop")
-        )
+    var dialpadCode by remember { mutableStateOf("*") }
+    var pendingDialCode by remember { mutableStateOf("") }
+    var pendingDialTitle by remember { mutableStateOf("") }
+    var showSimSelectDialog by remember { mutableStateOf(false) }
+    var showAddCustomDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+
+    val availableSims = remember { PermissionManager.getAvailableSimCards(context) }
+
+    val categories = remember {
+        listOf("All", "⭐ Favorites", "Safaricom", "Airtel", "Telkom", "Banks", "Government", "Custom")
     }
 
-    // Default sample flow items if database history is clean
-    val fallbackRecentFlows = remember {
-        listOf(
-            UssdHistoryItem(
-                id = 101,
-                timestamp = System.currentTimeMillis() - 120000,
-                ussdCode = "*334#",
-                serviceName = "M-PESA Send Money",
-                summary = "KES 500 sent to EMMAH KILONZO (0708814308)",
-                responseSequence = "1 ➔ 0708814308 ➔ 500 ➔ 1234 ➔ 1",
-                amount = "KES 500.00",
-                recipient = "0708814308 (EMMAH KILONZO)",
-                isSuccess = true
-            ),
-            UssdHistoryItem(
-                id = 102,
-                timestamp = System.currentTimeMillis() - 3600000,
-                ussdCode = "*334#",
-                serviceName = "Buy Airtime",
-                summary = "KES 100 Airtime top-up for primary line",
-                responseSequence = "3 ➔ 1 ➔ 100 ➔ 1234",
-                amount = "KES 100.00",
-                recipient = "My Phone",
-                isSuccess = true
-            ),
-            UssdHistoryItem(
-                id = 103,
-                timestamp = System.currentTimeMillis() - 7200000,
-                ussdCode = "*334#",
-                serviceName = "Paybill (KPLC Prepaid)",
-                summary = "KES 1,200 Electricity Token to 888888",
-                responseSequence = "4 ➔ 888888 ➔ 142890123 ➔ 1200 ➔ 1234",
-                amount = "KES 1,200.00",
-                recipient = "888888 (KPLC)",
-                isSuccess = true
-            ),
-            UssdHistoryItem(
-                id = 104,
-                timestamp = System.currentTimeMillis() - 14400000,
-                ussdCode = "*544#",
-                serviceName = "Data Bundles (2.5GB)",
-                summary = "2.5GB 24hr Daily bundle purchased",
-                responseSequence = "1 ➔ 2 ➔ 1",
-                amount = "KES 100.00",
-                recipient = "Self",
-                isSuccess = true
-            ),
-            UssdHistoryItem(
-                id = 105,
-                timestamp = System.currentTimeMillis() - 86400000,
-                ussdCode = "*185#",
-                serviceName = "Airtel Money Transfer",
-                summary = "KES 200 transferred to 0733123456",
-                responseSequence = "1 ➔ 0733123456 ➔ 200 ➔ 1234",
-                amount = "KES 200.00",
-                recipient = "0733123456",
-                isSuccess = true
-            )
-        )
-    }
-
-    val displayFlows = if (recentHistory.isNotEmpty()) recentHistory else fallbackRecentFlows
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Spacer(modifier = Modifier.height(4.dp))
-            // App Bar / Top Identity
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(TealPrimary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    Column {
-                        Text(
-                            text = "Codee",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Black,
-                            letterSpacing = (-0.5).sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Smart USSD Keypad & Flow Runner",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
+    // Combine preloaded codes + custom user codes
+    val allCombinedCodes = remember(savedCustomCodes, favoriteCodeIds) {
+        val preloaded = PreloadedUssdRepository.allCodes.map { item ->
+            item.copy(isFavorite = favoriteCodeIds.contains(item.id))
         }
+        val customAsItems = savedCustomCodes.map { custom ->
+            UssdCodeItem(
+                id = "custom_${custom.id}",
+                name = custom.title,
+                code = custom.ussdCode,
+                description = if (custom.description.isNotBlank()) custom.description else "Custom Saved USSD Code",
+                icon = "⭐",
+                category = if (custom.category.isNotBlank()) custom.category else "Custom",
+                colorHex = custom.colorHex,
+                isFavorite = custom.isFavorite || favoriteCodeIds.contains("custom_${custom.id}")
+            )
+        }
+        preloaded + customAsItems
+    }
 
-        // 1. QUICK CODES SHIFTED TO THE TOP
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val filteredCodes = remember(allCombinedCodes, searchQuery, selectedCategory) {
+        val query = searchQuery.trim().lowercase()
+        allCombinedCodes.filter { item ->
+            val matchesCategory = when (selectedCategory) {
+                "All" -> true
+                "⭐ Favorites" -> item.isFavorite
+                "Custom" -> item.id.startsWith("custom_") || item.category.equals("Custom", ignoreCase = true)
+                else -> item.category.equals(selectedCategory, ignoreCase = true)
+            }
+            val matchesSearch = if (query.isEmpty()) true else {
+                item.name.lowercase().contains(query) ||
+                item.code.lowercase().contains(query) ||
+                item.description.lowercase().contains(query) ||
+                item.category.lowercase().contains(query)
+            }
+            matchesCategory && matchesSearch
+        }
+    }
+
+    fun initiateDial(code: String, title: String = "") {
+        val clean = code.trim()
+        if (clean.isBlank()) return
+        pendingDialCode = clean
+        pendingDialTitle = if (title.isNotBlank()) title else clean
+        showSimSelectDialog = true
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Header
+            item {
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Quick Codes",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Tap to dial",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(TealPrimary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Phone,
+                                contentDescription = "CoDee",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
 
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Column {
+                            Text(
+                                text = "CoDee USSD Dialer",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-0.5).sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Direct In-App USSD Session Runner",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = EmeraldSuccessBg,
+                        border = BorderStroke(1.dp, EmeraldSuccess.copy(alpha = 0.3f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(EmeraldSuccess)
+                            )
+                            Text(
+                                text = "Real Carrier",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldSuccess
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Central User Input & Dialpad Card
+            item {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(quickCodesList) { (code, label) ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Display Box showing input USSD code
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(64.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = dialpadCode.ifBlank { "*100#" },
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 2.sp,
+                                color = if (dialpadCode.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
+                            )
+
+                            if (dialpadCode.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            dialpadCode = if (dialpadCode.length > 1) dialpadCode.dropLast(1) else ""
+                                        },
+                                        modifier = Modifier.testTag("dialpad_backspace_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Backspace,
+                                            contentDescription = "Backspace",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Dialpad Keys (3x4 Grid)
+                        val dialpadButtons = listOf(
+                            listOf("1" to "", "2" to "ABC", "3" to "DEF"),
+                            listOf("4" to "GHI", "5" to "JKL", "6" to "MNO"),
+                            listOf("7" to "PQRS", "8" to "TUV", "9" to "WXYZ"),
+                            listOf("*" to "", "0" to "+", "#" to "")
+                        )
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            dialpadButtons.forEach { row ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                    row.forEach { (mainText, subText) ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(62.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = ripple(bounded = true, radius = 31.dp),
+                                                    onClick = {
+                                                        dialpadCode += mainText
+                                                    }
+                                                )
+                                                .testTag("dialpad_key_$mainText"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Text(
+                                                    text = mainText,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (subText.isNotEmpty()) {
+                                                    Text(
+                                                        text = subText,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontSize = 8.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Large Call/Dial USSD Button
+                        Button(
+                            onClick = {
+                                if (dialpadCode.isNotBlank()) {
+                                    initiateDial(dialpadCode.trim(), "Manual Dial")
+                                }
+                            },
+                            enabled = dialpadCode.isNotBlank(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = TealPrimary,
+                                disabledContainerColor = TealPrimary.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                                .testTag("dial_entered_ussd_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = "Call",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Dial USSD Code",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Quick Preset Shortcuts
+            item {
+                Text(
+                    text = "Quick Presets",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val presets = listOf(
+                        "*334#" to "M-PESA",
+                        "*544#" to "Data Bundles",
+                        "*144#" to "Airtime Balance",
+                        "*247#" to "Equity Bank",
+                        "*185#" to "Airtel Money",
+                        "*100#" to "Customer Care"
+                    )
+                    items(presets) { (code, label) ->
                         Surface(
                             onClick = {
-                                onDialClear()
-                                code.forEach { onDialChar(it) }
-                                pendingDialCode = code
-                                pendingAutomatedSequence = emptyList()
-                                showSimChooserDialog = true
+                                dialpadCode = code
                             },
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier.testTag("quick_code_chip_${code.replace("*","").replace("#","")}")
+                            shape = RoundedCornerShape(12.dp),
+                            color = TealPrimary.copy(alpha = 0.1f),
+                            border = BorderStroke(1.dp, TealPrimary.copy(alpha = 0.3f))
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
                                     text = code,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    color = TealPrimary
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TealPrimaryDark
+                                    )
                                 )
                                 Text(
-                                    text = label,
+                                    text = "• $label",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -303,405 +438,362 @@ fun HomeScreen(
                     }
                 }
             }
-        }
 
-        // 2. TWO-SIDED OPTION SWITCHER (Left: Dialpad Keypad | Right: Recent Codes & Flows)
-        item {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    // Left Option: Keypad
-                    val isKeypad = selectedOption == HomeDialerOption.KEYPAD
-                    Surface(
-                        onClick = { selectedOption = HomeDialerOption.KEYPAD },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isKeypad) TealPrimary else Color.Transparent,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("option_left_keypad")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 9.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Dialpad,
-                                contentDescription = null,
-                                tint = if (isKeypad) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Dialpad",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isKeypad) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isKeypad) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    // Right Option: Recent Codes & Flows
-                    val isFlows = selectedOption == HomeDialerOption.RECENT_FLOWS
-                    Surface(
-                        onClick = { selectedOption = HomeDialerOption.RECENT_FLOWS },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isFlows) TealPrimary else Color.Transparent,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("option_right_recent_flows")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 9.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = if (isFlows) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Recent Flows (${displayFlows.size})",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isFlows) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isFlows) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. MAIN CONTENT CONTAINER (Switchable between Left Dialpad and Right Recent Flows)
-        if (selectedOption == HomeDialerOption.KEYPAD) {
-            // LEFT SIDE: Default Dialpad Keypad
+            // Search and Category Bar for directory
             item {
-                UssdDialpad(
-                    codeText = dialpadText,
-                    onCharClick = onDialChar,
-                    onDeleteClick = onDialDelete,
-                    onClearClick = onDialClear,
-                    onDialClick = {
-                        val codeToDial = dialpadText.trim()
-                        if (codeToDial.isNotBlank()) {
-                            pendingDialCode = codeToDial
-                            pendingAutomatedSequence = emptyList()
-                            showSimChooserDialog = true
-                        }
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search USSD directory...") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     },
-                    modifier = Modifier.testTag("main_ussd_dialpad")
-                )
-            }
-        } else {
-            // RIGHT SIDE: Recent Codes & Step Flow Automation
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "Recent USSD Flows & Choices",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Click any flow to run automation automatically",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        if (onNavigateToHistory != null) {
-                            Surface(
-                                onClick = onNavigateToHistory,
-                                shape = RoundedCornerShape(10.dp),
-                                color = TealContainer.copy(alpha = 0.5f)
-                            ) {
-                                Text(
-                                    text = "All Logs",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = TealPrimaryDark,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Clear Search",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                    }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = TealPrimary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("search_ussd_codes_input")
+                )
+            }
 
-                    // List of recent flow items with step sequence badges
-                    displayFlows.forEach { item ->
-                        val sequenceSteps = extractStepsFromHistory(item)
-
-                        Card(
-                            onClick = {
-                                pendingDialCode = item.ussdCode
-                                pendingAutomatedSequence = sequenceSteps
-                                showSimChooserDialog = true
+            // Categories
+            item {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(categories) { category ->
+                        val isSelected = selectedCategory == category
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedCategory = category },
+                            label = {
+                                Text(
+                                    text = category,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
                             },
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = TealPrimary,
+                                selectedLabelColor = Color.White,
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                labelColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("history_flow_card_${item.id}")
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                // Top row: Code + Service Name + Time
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = TealContainer
-                                        ) {
-                                            Text(
-                                                text = item.ussdCode,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.Bold,
-                                                color = TealPrimaryDark,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-
-                                        Text(
-                                            text = item.serviceName.ifBlank { "USSD Service" },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-
-                                    Text(
-                                        text = formatTimeAgo(item.timestamp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 11.sp
-                                    )
-                                }
-
-                                // Step Flow & Numbers Selected Display
-                                val displaySequence = parseStepDisplayList(item.responseSequence, sequenceSteps)
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(
-                                        text = "Recorded Flow & Numbers:",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        displaySequence.forEachIndexed { index, step ->
-                                            Surface(
-                                                shape = RoundedCornerShape(8.dp),
-                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "Step ${index + 1}:",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontSize = 10.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                    Text(
-                                                        text = step,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontFamily = FontFamily.Monospace,
-                                                        color = TealPrimary
-                                                    )
-                                                }
-                                            }
-
-                                            if (index < displaySequence.size - 1) {
-                                                Icon(
-                                                    imageVector = Icons.Default.ArrowForward,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                                    modifier = Modifier
-                                                        .size(12.dp)
-                                                        .align(Alignment.CenterVertically)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Summary text
-                                if (item.summary.isNotBlank()) {
-                                    Text(
-                                        text = item.summary,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2
-                                    )
-                                }
-
-                                // Bottom action row: Run Automation button
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (item.amount != null) {
-                                        Text(
-                                            text = item.amount,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = EmeraldSuccess
-                                        )
-                                    } else {
-                                        Spacer(modifier = Modifier.width(1.dp))
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            pendingDialCode = item.ussdCode
-                                            pendingAutomatedSequence = sequenceSteps
-                                            showSimChooserDialog = true
-                                        },
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = TealPrimary,
-                                            contentColor = Color.White
-                                        ),
-                                        modifier = Modifier.testTag("run_automation_button_${item.id}")
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PlayArrow,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text(
-                                                text = "Run Automation",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                            shape = RoundedCornerShape(12.dp)
+                        )
                     }
                 }
             }
-        }
 
-        item {
-            Spacer(modifier = Modifier.height(20.dp))
-        }
-    }
+            // Code Count & Add Custom Button
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${filteredCodes.size} Saved & Popular Codes",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-    // SIM Selection Dialog / Bottom Sheet before launching session
-    if (showSimChooserDialog) {
-        val targetCode = pendingDialCode ?: dialpadText.ifBlank { "*334#" }
-        val targetSequence = pendingAutomatedSequence
-        SimSelectionBottomSheet(
-            codeTitle = if (targetSequence.isNotEmpty()) "Run Automated Flow" else "USSD Dial",
-            ussdCode = targetCode,
-            simCards = simCards,
-            selectedSimSlot = selectedSimSlot,
-            onSelectSimSlot = { slot ->
-                onSelectSimSlot(slot)
-                showSimChooserDialog = false
-                val stepsToRun = targetSequence
-                pendingAutomatedSequence = emptyList()
-                onInitiateSession(targetCode, slot, stepsToRun, true)
-            },
-            onDismiss = {
-                showSimChooserDialog = false
-                pendingAutomatedSequence = emptyList()
+                    TextButton(
+                        onClick = { showAddCustomDialog = true },
+                        modifier = Modifier.testTag("add_custom_code_button")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Code", fontWeight = FontWeight.Bold, color = TealPrimary)
+                    }
+                }
             }
-        )
-    }
-}
 
-/**
- * Extracts raw step strings from history item sequence
- */
-private fun extractStepsFromHistory(item: UssdHistoryItem): List<String> {
-    if (item.responseSequence.isNotBlank()) {
-        val tokens = item.responseSequence.split("➔", "->", ",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        if (tokens.isNotEmpty()) return tokens
-    }
-    if (item.stepsSummary.isNotBlank()) {
-        val lines = item.stepsSummary.lines()
-        val inputs = lines.mapNotNull { line ->
-            val part = line.substringAfter("Input:", "").trim()
-            if (part.isNotEmpty() && part != "null" && part != "-") part else null
+            // List of Codes
+            items(filteredCodes, key = { it.id }) { item ->
+                UssdCodeDirectoryCard(
+                    item = item,
+                    onDial = {
+                        dialpadCode = item.code
+                        initiateDial(item.code, item.name)
+                    },
+                    onToggleFavorite = { onToggleFavoriteCode?.invoke(item.id) },
+                    onCopy = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("USSD", item.code))
+                        Toast.makeText(context, "Copied ${item.code}", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(80.dp))
+            }
         }
-        if (inputs.isNotEmpty()) return inputs
+
+        // SIM Selection Dialog: prompts user for SIM and immediately triggers dial on that SIM
+        if (showSimSelectDialog) {
+            SimSelectionDialog(
+                codeToDial = pendingDialCode,
+                simCards = availableSims,
+                onSelectSim = { slotIndex ->
+                    showSimSelectDialog = false
+                    val matchedSim = availableSims.firstOrNull { it.slotIndex == slotIndex }
+                    val subId = matchedSim?.subscriptionId ?: -1
+                    onDialCode(pendingDialCode, pendingDialTitle, subId, slotIndex)
+                },
+                onDismiss = {
+                    showSimSelectDialog = false
+                }
+            )
+        }
+
+        // Add Custom Code Dialog
+        if (showAddCustomDialog) {
+            AddCustomCodeDialog(
+                onDismiss = { showAddCustomDialog = false },
+                onSave = { title, code, cat, desc ->
+                    onSaveCustomCode?.invoke(title, code, cat, desc)
+                    showAddCustomDialog = false
+                    Toast.makeText(context, "Saved $title ($code)", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
     }
-    return listOf("1")
 }
 
-/**
- * Converts sequence tokens into readable step tokens
- */
-private fun parseStepDisplayList(rawSequence: String, fallbackList: List<String>): List<String> {
-    if (rawSequence.isNotBlank()) {
-        val tokens = rawSequence.split("➔", "->", ",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        if (tokens.isNotEmpty()) return tokens
+@Composable
+fun UssdCodeDirectoryCard(
+    item: UssdCodeItem,
+    onDial: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onCopy: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onDial() }
+            .testTag("ussd_card_${item.code.replace("*", "").replace("#", "")}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = item.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = TealPrimary.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, TealPrimary.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = item.code,
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TealPrimaryDark
+                        ),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                if (item.description.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = item.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onCopy,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy code",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onToggleFavorite,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (item.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            contentDescription = "Favorite",
+                            tint = if (item.isFavorite) Color(0xFFE11D48) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onDial,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TealPrimary
+                    ),
+                    modifier = Modifier.testTag("dial_code_${item.code.replace("*", "").replace("#", "")}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = "Dial",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Dial",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
     }
-    return fallbackList
 }
 
-private fun formatTimeAgo(timestamp: Long): String {
-    val diff = System.currentTimeMillis() - timestamp
-    val minutes = diff / 60000
-    return when {
-        minutes < 1 -> "Just now"
-        minutes < 60 -> "${minutes}m ago"
-        minutes < 1440 -> "${minutes / 60}h ago"
-        else -> "${minutes / 1440}d ago"
-    }
-}
+@Composable
+fun AddCustomCodeDialog(
+    onDismiss: () -> Unit,
+    onSave: (title: String, code: String, category: String, description: String) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("Custom") }
+    var description by remember { mutableStateOf("") }
 
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(text = "Add Custom USSD Code", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Service / Name") },
+                    placeholder = { Text("e.g. My Utility Account") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("USSD String") },
+                    placeholder = { Text("e.g. *123*45#") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = category,
+                    onValueChange = { category = it },
+                    label = { Text("Category") },
+                    placeholder = { Text("e.g. Personal, Work, Utility") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description (Optional)") },
+                    placeholder = { Text("e.g. Fast shortcut to prepaid balance") },
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (title.isNotBlank() && code.isNotBlank()) {
+                        onSave(title.trim(), code.trim(), category.trim(), description.trim())
+                    }
+                },
+                enabled = title.isNotBlank() && code.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = TealPrimary)
+            ) {
+                Text("Save Code", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}

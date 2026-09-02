@@ -84,19 +84,25 @@ object UssdSessionManager {
     ) {
         val cleanCode = rawCode.trim()
 
-        // 1. Guard against non-user-initiated auto-dialing loops
+        // 1. Reset attempts when user manually / explicitly initiates a fresh dial
+        if (userInitiated) {
+            dialAttempts = 0
+            Log.d(TAG, "🔄 User-initiated dial for $cleanCode - reset dial attempts to 0")
+        }
+
+        // 2. Guard against non-user-initiated auto-dialing loops
         if (!userInitiated) {
             Log.w(TAG, "❌ Blocked auto-dial attempt for $cleanCode. All USSD operations require explicit user interaction.")
             return
         }
 
-        // 2. Guard against concurrent session re-entry
+        // 3. Guard against concurrent session re-entry
         if (isSessionRunning && _sessionState.value !is UssdSessionState.Idle) {
             Log.w(TAG, "⚠️ Session already active for $currentSessionCode. Blocked concurrent dial request for $cleanCode.")
             return
         }
 
-        // 3. Rate limiting and loop prevention
+        // 4. Rate limiting and loop prevention (max attempts check)
         if (dialAttempts >= MAX_ATTEMPTS) {
             Log.e(TAG, "🛑 Maximum dial attempts ($MAX_ATTEMPTS) reached for $cleanCode. Terminating to prevent infinite loop.")
             _sessionState.value = UssdSessionState.Completed(
