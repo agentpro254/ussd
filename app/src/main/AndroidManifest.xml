@@ -47,7 +47,7 @@
             android:name=".service.CodeeAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
-            android:label="Codee USSD Helper"
+            android:label="@string/accessibility_service_label"
             android:description="@string/accessibility_service_description">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
