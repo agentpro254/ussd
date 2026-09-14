@@ -11,8 +11,14 @@ enum class UssdResponseType {
     CONFIRMATION,
     SUCCESS_RESULT,
     ERROR_RESULT,
-    INFO
+    INFO,
+    SINGLE_MESSAGE
 }
+
+data class MenuOption(
+    val number: String,
+    val label: String
+)
 
 enum class UssdInputType {
     NONE,

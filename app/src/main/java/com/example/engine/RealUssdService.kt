@@ -60,7 +60,6 @@ object RealUssdService {
                 putExtra(TransparentActivity.EXTRA_SLOT_INDEX, simSlot)
             }
             context.startActivity(intent)
-            callback.onResponse("Waiting for carrier response...")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch TransparentActivity", e)
             callback.onError("Failed to initiate USSD request: ${e.message}")

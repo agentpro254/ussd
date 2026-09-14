@@ -1,262 +1,455 @@
+// SmsParser.kt - Complete Updated Version
+
 package com.example.engine
 
+import android.util.Log
 import com.example.data.model.ParsedSms
 import com.example.data.model.SmsMessage
 import com.example.data.model.SmsType
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class SmsParser {
 
+    companion object {
+        private const val TAG = "SmsParser"
+    }
+
     fun parseSms(message: SmsMessage): ParsedSms {
         val body = message.body
-        val type = detectType(body, message.sender)
+        val sender = message.sender
+        Log.d(TAG, "📱 Parsing SMS from: $sender")
+        Log.d(TAG, "📝 Body: $body")
+
+        val type = detectType(body, sender)
 
         return when (type) {
-            SmsType.MPESA_SENT -> parseMpesaSent(message)
-            SmsType.MPESA_RECEIVED -> parseMpesaReceived(message)
-            SmsType.MPESA_AIRTIME -> parseMpesaAirtime(message)
-            SmsType.MPESA_BILL_PAYMENT -> parseMpesaBillPayment(message)
-            SmsType.MPESA_WITHDRAWAL -> parseMpesaWithdrawal(message)
-            SmsType.BANK_ALERT -> parseBankAlert(message)
-            SmsType.GOVERNMENT -> parseGovernmentMessage(message)
+            SmsType.MPESA_SENT -> parseMpesaSent(body, message)
+            SmsType.MPESA_RECEIVED -> parseMpesaReceived(body, message)
+            SmsType.MPESA_PAID -> parseMpesaPaid(body, message)
+            SmsType.MPESA_AIRTIME -> parseMpesaAirtime(body, message)
+            SmsType.MPESA_BILL_PAYMENT -> parseMpesaBillPayment(body, message)
+            SmsType.MPESA_WITHDRAWAL -> parseMpesaWithdrawal(body, message)
+            SmsType.BANK_ALERT -> parseBankAlert(body, sender, message)
+            SmsType.GOVERNMENT -> parseGovernmentMessage(body, sender, message)
             else -> ParsedSms(
                 raw = message,
                 type = SmsType.OTHER,
-                isConfirmed = false
+                isConfirmed = false,
+                rawText = body
             )
         }
     }
 
+    fun parseSms(body: String, sender: String = ""): ParsedSms {
+        val dummyMessage = SmsMessage(
+            id = System.currentTimeMillis().toString(),
+            sender = sender,
+            body = body,
+            timestamp = System.currentTimeMillis()
+        )
+        return parseSms(dummyMessage)
+    }
+
     private fun detectType(body: String, sender: String): SmsType {
         val lower = body.lowercase()
-        val s = sender.lowercase()
+        val senderLower = sender.lowercase()
 
-        // M-PESA detection
-        if (s.contains("mpesa") || s.contains("m-pesa") || s.contains("safaricom") || lower.contains("confirmed. you bought")) {
+        // M-PESA / Safaricom
+        if (senderLower.contains("mpesa") || 
+            senderLower.contains("safaricom") ||
+            lower.contains("mpesa") ||
+            lower.contains("m-pesa")) {
+            
             return when {
-                lower.contains("received ksh") || lower.contains("you have received") || lower.contains("received from") -> SmsType.MPESA_RECEIVED
-                lower.contains("sent to") || lower.contains("transferred to") -> SmsType.MPESA_SENT
-                lower.contains("bought ksh") || lower.contains("airtime") -> SmsType.MPESA_AIRTIME
-                lower.contains("paid to") || lower.contains("paybill") || lower.contains("till") -> SmsType.MPESA_BILL_PAYMENT
-                lower.contains("withdrawn") || lower.contains("withdraw") || lower.contains("give ksh") -> SmsType.MPESA_WITHDRAWAL
+                lower.contains("received ksh") || 
+                lower.contains("received from") -> SmsType.MPESA_RECEIVED
+                
+                lower.contains("paid to") -> SmsType.MPESA_PAID
+                
+                lower.contains("sent ksh") || 
+                lower.contains("sent to") -> SmsType.MPESA_SENT
+                
+                lower.contains("airtime") -> SmsType.MPESA_AIRTIME
+                
+                lower.contains("paybill") || 
+                lower.contains("bill") || 
+                lower.contains("pay bill") -> SmsType.MPESA_BILL_PAYMENT
+                
+                lower.contains("withdrawn") || 
+                lower.contains("withdraw") || 
+                lower.contains("agent") -> SmsType.MPESA_WITHDRAWAL
+                
                 else -> SmsType.MPESA_SENT
             }
         }
 
-        // Bank detection
-        if (s.contains("equity") || s.contains("kcb") ||
-            s.contains("co-op") || s.contains("coop") || s.contains("family") ||
-            s.contains("standard") || s.contains("ncba") || s.contains("stanbic") ||
-            s.contains("absa") || lower.contains("bank a/c") || lower.contains("account balance")) {
+        // Banks
+        if (senderLower.contains("equity") || 
+            senderLower.contains("kcb") ||
+            senderLower.contains("co-op") || 
+            senderLower.contains("cooperative") ||
+            senderLower.contains("family bank") ||
+            senderLower.contains("standard chartered") ||
+            senderLower.contains("ncba") ||
+            senderLower.contains("absa") ||
+            senderLower.contains("stanbic") ||
+            senderLower.contains("dtb") ||
+            lower.contains("equity") ||
+            lower.contains("kcb")) {
             return SmsType.BANK_ALERT
         }
 
-        // Government detection
-        if (s.contains("kra") || s.contains("nhif") ||
-            s.contains("kplc") || s.contains("ecitizen") ||
-            s.contains("helb") || s.contains("nssf") || s.contains("huduma")) {
+        // Government
+        if (senderLower.contains("kra") || 
+            senderLower.contains("nhif") ||
+            senderLower.contains("kplc") ||
+            senderLower.contains("ecitizen") ||
+            senderLower.contains("helb") ||
+            senderLower.contains("nssf")) {
             return SmsType.GOVERNMENT
         }
 
         return SmsType.OTHER
     }
 
-    private fun parseMpesaSent(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true)) it else "Ksh $it" }
+    // ✅ FORMAT 1: "you have sent Ksh. 100.0 to HEZRON O HELLEN for 40069635"
+    private fun parseMpesaSent(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        Log.d(TAG, "🔍 Parsing SENT: $body")
 
-        val recipient = extractPattern(
-            body,
-            Regex("sent to\\s+([A-Z0-9\\s]+?)(?:\\s+\\d{10,12}|\\s+on\\s+)", RegexOption.IGNORE_CASE)
-        ) ?: extractPattern(body, Regex("sent to\\s+([A-Z\\s]+)", RegexOption.IGNORE_CASE))
+        // Extract amount - handles "Ksh. 100.0" or "Ksh100.00"
+        val amount = extractAmount(body)
+        
+        // Extract recipient name - handles "HEZRON O HELLEN"
+        val recipient = extractSentRecipient(body)
+        
+        // Extract phone/account number - handles "for 40069635"
+        val accountNumber = extractAccountNumber(body)
+        
+        // Extract transaction code - handles "UHR6M4WZ3I"
+        val code = extractTransactionCode(body)
+        
+        // Extract date/time - handles "08/27/2026 at 11:04:05"
+        val dateTime = extractDateTime(body)
 
-        val phone = extractPattern(body, Regex("(07\\d{8}|01\\d{8}|\\+254\\d{9}|254\\d{9})"))
-
-        val code = extractPattern(body, Regex("^([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
-
-        val balance = extractPattern(
-            body,
-            Regex("New\\s+M-PESA\\s+balance\\s+is\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-        )
-        val balanceStr = balance?.let { "Ksh $it" }
-
-        val fee = extractPattern(
-            body,
-            Regex("Transaction cost,\\s*Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-        )
-        val feeStr = fee?.let { "Ksh $it" }
-
-        val dateTime = extractPattern(
-            body,
-            Regex("on\\s+(\\d{1,2}/\\d{1,2}/\\d{2,4})\\s+at\\s+(\\d{1,2}:\\d{2}\\s*(?:AM|PM)?)", RegexOption.IGNORE_CASE)
-        )
+        Log.d(TAG, "✅ Parsed SENT - Amount: $amount, Recipient: $recipient, Account: $accountNumber, Code: $code")
 
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.MPESA_SENT,
-            amount = amountStr,
-            recipient = recipient?.trim(),
-            phoneNumber = phone,
+            amount = amount,
+            recipient = recipient,
+            phoneNumber = accountNumber,
             transactionCode = code,
-            balance = balanceStr,
-            fee = feeStr,
             dateTime = dateTime,
-            isConfirmed = true
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseMpesaReceived(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true)) it else "Ksh $it" }
+    // ✅ FORMAT 2 & 4: "You have received Ksh10.00 from Hellen Odinga 0720***813"
+    private fun parseMpesaReceived(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        Log.d(TAG, "🔍 Parsing RECEIVED: $body")
 
-        val sender = extractPattern(
-            body,
-            Regex("received\\s+from\\s+([A-Z0-9\\s]+?)(?:\\s+\\d{10,12}|\\s+on\\s+)", RegexOption.IGNORE_CASE)
-        ) ?: extractPattern(body, Regex("from\\s+([A-Z\\s]+)", RegexOption.IGNORE_CASE))
+        // Extract amount
+        val amount = extractAmount(body)
+        
+        // Extract sender name - handles "Hellen Odinga" or "CELESTINE UNGUKU"
+        val sender = extractReceivedSender(body)
+        
+        // Extract phone number - handles "0720***813" or "0141***004"
+        val phone = extractPhoneNumber(body)
+        
+        // Extract transaction code - handles "UI2NG57BB3"
+        val code = extractTransactionCode(body)
+        
+        // Extract date/time - handles "2/9/26 at 3:50 PM"
+        val dateTime = extractDateTime(body)
 
-        val phone = extractPattern(body, Regex("(07\\d{8}|01\\d{8}|\\+254\\d{9}|254\\d{9})"))
-        val code = extractPattern(body, Regex("([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("^([A-Z0-9]{8,12})", RegexOption.IGNORE_CASE))
-
-        val balance = extractPattern(
-            body,
-            Regex("New\\s+M-PESA\\s+balance\\s+is\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-        )
-        val balanceStr = balance?.let { "Ksh $it" }
-
-        val dateTime = extractPattern(
-            body,
-            Regex("on\\s+(\\d{1,2}/\\d{1,2}/\\d{2,4})\\s+at\\s+(\\d{1,2}:\\d{2}\\s*(?:AM|PM)?)", RegexOption.IGNORE_CASE)
-        )
+        Log.d(TAG, "✅ Parsed RECEIVED - Amount: $amount, Sender: $sender, Phone: $phone, Code: $code")
 
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.MPESA_RECEIVED,
-            amount = amountStr,
-            sender = sender?.trim(),
+            amount = amount,
+            sender = sender,
             phoneNumber = phone,
             transactionCode = code,
-            balance = balanceStr,
             dateTime = dateTime,
-            isConfirmed = true
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseMpesaAirtime(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("(?:bought|airtime of)\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true)) it else "Ksh $it" }
+    // ✅ FORMAT 3: "Ksh60.00 paid to MOSES NJUGUNA"
+    private fun parseMpesaPaid(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        Log.d(TAG, "🔍 Parsing PAID: $body")
 
-        val phone = extractPattern(body, Regex("(07\\d{8}|01\\d{8}|\\+254\\d{9}|254\\d{9})"))
-        val code = extractPattern(body, Regex("([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
+        // Extract amount
+        val amount = extractAmount(body)
+        
+        // Extract recipient name - handles "MOSES NJUGUNA"
+        val recipient = extractPaidRecipient(body)
+        
+        // Extract transaction code
+        val code = extractTransactionCode(body)
+        
+        // Extract date/time
+        val dateTime = extractDateTime(body)
 
-        val balance = extractPattern(
-            body,
-            Regex("New\\s+M-PESA\\s+balance\\s+is\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-        )
+        Log.d(TAG, "✅ Parsed PAID - Amount: $amount, Recipient: $recipient, Code: $code")
 
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
+            type = SmsType.MPESA_PAID,
+            amount = amount,
+            recipient = recipient,
+            transactionCode = code,
+            dateTime = dateTime,
+            isConfirmed = true,
+            rawText = body
+        )
+    }
+
+    // ✅ EXTRACT AMOUNT - Handles all formats
+    private fun extractAmount(text: String): String? {
+        // Pattern: "Ksh. 100.0" or "Ksh100.00" or "Ksh 100.00" or "Ksh10.00"
+        val patterns = listOf(
+            Regex("Ksh\\.\\s*([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE),
+            Regex("Ksh\\s*([\\d,]+\\.\\d{2})", RegexOption.IGNORE_CASE),
+            Regex("Ksh\\s*([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE),
+            Regex("([\\d,]+\\.\\d{2})\\s*paid", RegexOption.IGNORE_CASE),
+            Regex("([\\d,]+\\.\\d{2})\\s*sent", RegexOption.IGNORE_CASE),
+            Regex("([\\d,]+\\.\\d{2})\\s*received", RegexOption.IGNORE_CASE)
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(text)?.let {
+                val value = it.groupValues[1].trim()
+                if (value.isNotEmpty()) {
+                    // Format properly
+                    val formatted = if (value.contains(".")) value else "$value.00"
+                    return "Ksh $formatted"
+                }
+            }
+        }
+        
+        return null
+    }
+
+    // ✅ EXTRACT SENT RECIPIENT - "HEZRON O HELLEN"
+    private fun extractSentRecipient(text: String): String? {
+        // Pattern: "to HEZRON O HELLEN for"
+        val pattern1 = Regex("to\\s+([A-Za-z\\s]+?)\\s+for\\s+\\d+", RegexOption.IGNORE_CASE)
+        pattern1.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        // Pattern: "to HEZRON O HELLEN"
+        val pattern2 = Regex("to\\s+([A-Za-z\\s]+?)(?:\\s+\\d|\\n|\\.|,|$)", RegexOption.IGNORE_CASE)
+        pattern2.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        return null
+    }
+
+    // ✅ EXTRACT RECEIVED SENDER - "Hellen Odinga" or "CELESTINE UNGUKU"
+    private fun extractReceivedSender(text: String): String? {
+        // Pattern: "from Hellen Odinga 0720***813"
+        val pattern1 = Regex("from\\s+([A-Za-z\\s]+?)\\s+\\d{4}\\*{3}\\d{3,4}", RegexOption.IGNORE_CASE)
+        pattern1.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        // Pattern: "from Hellen Odinga"
+        val pattern2 = Regex("from\\s+([A-Za-z\\s]+?)(?:\\s+\\d|\\n|\\.|,|$)", RegexOption.IGNORE_CASE)
+        pattern2.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        return null
+    }
+
+    // ✅ EXTRACT PAID RECIPIENT - "MOSES NJUGUNA"
+    private fun extractPaidRecipient(text: String): String? {
+        // Pattern: "paid to MOSES NJUGUNA"
+        val pattern1 = Regex("paid to\\s+([A-Za-z\\s]+?)(?:\\s+on|\\n|\\.|,|$)", RegexOption.IGNORE_CASE)
+        pattern1.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        // Pattern: "to MOSES NJUGUNA"
+        val pattern2 = Regex("to\\s+([A-Za-z\\s]+?)(?:\\s+on|\\n|\\.|,|$)", RegexOption.IGNORE_CASE)
+        pattern2.find(text)?.let {
+            val name = it.groupValues[1].trim()
+            if (name.isNotEmpty() && name.length > 2) return name
+        }
+
+        return null
+    }
+
+    // ✅ EXTRACT ACCOUNT NUMBER - "for 40069635"
+    private fun extractAccountNumber(text: String): String? {
+        // Pattern: "for 40069635"
+        val pattern1 = Regex("for\\s+(\\d{8,10})", RegexOption.IGNORE_CASE)
+        pattern1.find(text)?.let {
+            return it.groupValues[1]
+        }
+
+        // Pattern: "account 40069635"
+        val pattern2 = Regex("account\\s+(\\d{8,10})", RegexOption.IGNORE_CASE)
+        pattern2.find(text)?.let {
+            return it.groupValues[1]
+        }
+
+        return null
+    }
+
+    // ✅ EXTRACT TRANSACTION CODE
+    private fun extractTransactionCode(text: String): String? {
+        // Pattern: "MPESA Ref. UHR6M4WZ3I" or "UI2NG57BB3"
+        val patterns = listOf(
+            Regex("MPESA\\s+Ref\\.\\s*([A-Z0-9]{7,12})", RegexOption.IGNORE_CASE),
+            Regex("Ref\\.\\s*([A-Z0-9]{7,12})", RegexOption.IGNORE_CASE),
+            Regex("MPESA\\s+Ref\\s*[:\\-]?\\s*([A-Z0-9]{7,12})", RegexOption.IGNORE_CASE),
+            Regex("\\b([A-Z]{1,2}[A-Z0-9]{6,11})\\b") // Generic alphanumeric code
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(text)?.let {
+                val code = it.groupValues[1].trim()
+                if (code.length >= 6 && code.matches(Regex("[A-Z0-9]+"))) {
+                    return code
+                }
+            }
+        }
+        
+        return null
+    }
+
+    // ✅ EXTRACT DATE/TIME
+    private fun extractDateTime(text: String): String? {
+        // Pattern 1: "08/27/2026 at 11:04:05"
+        val pattern1 = Regex("on\\s+(\\d{1,2}/\\d{1,2}/\\d{2,4})\\s+at\\s+(\\d{1,2}:\\d{2}:\\d{2})", RegexOption.IGNORE_CASE)
+        pattern1.find(text)?.let {
+            return "${it.groupValues[1]} ${it.groupValues[2]}"
+        }
+
+        // Pattern 2: "2/9/26 at 3:50 PM"
+        val pattern2 = Regex("on\\s+(\\d{1,2}/\\d{1,2}/\\d{2,4})\\s+at\\s+(\\d{1,2}:\\d{2})\\s+(AM|PM)", RegexOption.IGNORE_CASE)
+        pattern2.find(text)?.let {
+            return "${it.groupValues[1]} ${it.groupValues[2]}:00 ${it.groupValues[3]}"
+        }
+
+        // Pattern 3: "08/27/2026 at 11:04:05" (without "on")
+        val pattern3 = Regex("(\\d{1,2}/\\d{1,2}/\\d{2,4})\\s+at\\s+(\\d{1,2}:\\d{2}:\\d{2})", RegexOption.IGNORE_CASE)
+        pattern3.find(text)?.let {
+            return "${it.groupValues[1]} ${it.groupValues[2]}"
+        }
+
+        return null
+    }
+
+    // ✅ EXTRACT PHONE NUMBER (including partial)
+    private fun extractPhoneNumber(text: String): String? {
+        // Pattern: "0720***813" or "0141***004"
+        val pattern1 = Regex("(\\d{4}\\*{3}\\d{3,4})")
+        pattern1.find(text)?.let {
+            return it.groupValues[1]
+        }
+
+        // Pattern: "07xxxxxxxx"
+        val pattern2 = Regex("(07\\d{8}|01\\d{8}|\\+254\\d{9})")
+        pattern2.find(text)?.let {
+            return it.value
+        }
+
+        // Pattern: "0720 123 456"
+        val pattern3 = Regex("(07\\d{2}\\s\\d{3}\\s\\d{3})")
+        pattern3.find(text)?.let {
+            return it.value.replace(" ", "")
+        }
+
+        return null
+    }
+
+    private fun parseMpesaAirtime(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        val amount = extractAmount(body)
+        val phone = extractPhoneNumber(body)
+        val code = extractTransactionCode(body)
+
+        return ParsedSms(
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.MPESA_AIRTIME,
-            amount = amountStr,
+            amount = amount,
             phoneNumber = phone,
             transactionCode = code,
-            balance = balance?.let { "Ksh $it" },
-            isConfirmed = true
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseMpesaBillPayment(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true)) it else "Ksh $it" }
-
-        val business = extractPattern(
-            body,
-            Regex("paid to\\s+([A-Za-z0-9\\s]+?)(?:\\s+for\\s+|\\s+on\\s+)", RegexOption.IGNORE_CASE)
-        ) ?: extractPattern(body, Regex("paid to\\s+([A-Za-z0-9\\s]+)", RegexOption.IGNORE_CASE))
-
-        val code = extractPattern(body, Regex("([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
-        val balance = extractPattern(
-            body,
-            Regex("New\\s+M-PESA\\s+balance\\s+is\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE)
-        )
+    private fun parseMpesaBillPayment(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        val amount = extractAmount(body)
+        val business = extractPaidRecipient(body)
+        val code = extractTransactionCode(body)
 
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.MPESA_BILL_PAYMENT,
-            amount = amountStr,
-            recipient = business?.trim(),
+            amount = amount,
+            recipient = business,
             transactionCode = code,
-            balance = balance?.let { "Ksh $it" },
-            isConfirmed = true
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseMpesaWithdrawal(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Withdraw\\s+Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("Ksh\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true)) it else "Ksh $it" }
-
-        val agent = extractPattern(
-            body,
-            Regex("from\\s+([A-Za-z0-9\\s]+?)(?:\\s+agent|\\s+on\\s+)", RegexOption.IGNORE_CASE)
-        )
-        val code = extractPattern(body, Regex("([A-Z0-9]{8,12})\\s+Confirmed", RegexOption.IGNORE_CASE))
+    private fun parseMpesaWithdrawal(body: String, originalMessage: SmsMessage? = null): ParsedSms {
+        val amount = extractAmount(body)
+        val code = extractTransactionCode(body)
 
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.MPESA_WITHDRAWAL,
-            amount = amountStr,
-            sender = agent?.trim(),
+            amount = amount,
             transactionCode = code,
-            isConfirmed = true
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseBankAlert(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Ksh\\.?\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("KES\\.?\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("([\\d,]+\\.\\d{2})", RegexOption.IGNORE_CASE))
-        val amountStr = amount?.let { if (it.startsWith("Ksh", true) || it.startsWith("KES", true)) it else "Ksh $it" }
-
-        val code = extractPattern(body, Regex("Ref(?:erence)?[:\\s]+([A-Z0-9]+)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("Txn ID[:\\s]+([A-Z0-9]+)", RegexOption.IGNORE_CASE))
-
+    private fun parseBankAlert(body: String, sender: String, originalMessage: SmsMessage? = null): ParsedSms {
+        val amount = extractAmount(body)
+        val bankName = sender.replace("Bank", "").trim()
+        
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.BANK_ALERT,
-            amount = amountStr,
-            sender = message.sender,
-            transactionCode = code,
-            isConfirmed = true
+            amount = amount,
+            recipient = bankName,
+            isConfirmed = true,
+            rawText = body
         )
     }
 
-    private fun parseGovernmentMessage(message: SmsMessage): ParsedSms {
-        val body = message.body
-        val amount = extractPattern(body, Regex("Ksh\\.?\\s?([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE))
-        val code = extractPattern(body, Regex("Ref[:\\s]+([A-Z0-9]+)", RegexOption.IGNORE_CASE))
-            ?: extractPattern(body, Regex("PRN[:\\s]+([A-Z0-9]+)", RegexOption.IGNORE_CASE))
-
+    private fun parseGovernmentMessage(body: String, sender: String, originalMessage: SmsMessage? = null): ParsedSms {
+        val amount = extractAmount(body)
+        
         return ParsedSms(
-            raw = message,
+            raw = originalMessage ?: SmsMessage("", "", body, System.currentTimeMillis()),
             type = SmsType.GOVERNMENT,
-            amount = amount?.let { "Ksh $it" },
-            sender = message.sender,
-            transactionCode = code,
-            isConfirmed = true
+            amount = amount,
+            recipient = sender,
+            isConfirmed = true,
+            rawText = body
         )
-    }
-
-    private fun extractPattern(text: String, regex: Regex): String? {
-        return regex.find(text)?.let {
-            it.groupValues.getOrNull(1)?.trim()
-        }
     }
 }

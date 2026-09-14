@@ -134,4 +134,118 @@ class ExampleUnitTest {
         assertEquals("99", nav.next?.id)
         assertEquals("0", nav.main?.id)
     }
+
+    @Test
+    fun testRealMpesaFormat1SentMoney() {
+        val parser = com.example.engine.SmsParser()
+        val text = """
+            Dear VAIDAH OTIWU,
+            you have sent Ksh.
+            100.0 to HEZRON O
+            HELLEN for 40069635
+            on 08/27/2026 at
+            11:04:05. MPESA Ref.
+            UHR6M4WZ3I.
+        """.trimIndent()
+        val parsed = parser.parseSms(text, "MPESA")
+        assertEquals(com.example.data.model.SmsType.MPESA_SENT, parsed.type)
+        assertEquals("Ksh 100.0", parsed.amount)
+        assertEquals("HEZRON O\nHELLEN", parsed.recipient)
+        assertEquals("40069635", parsed.phoneNumber)
+        assertEquals("UHR6M4WZ3I", parsed.transactionCode)
+    }
+
+    @Test
+    fun testRealMpesaFormat2ReceivedMoney() {
+        val parser = com.example.engine.SmsParser()
+        val text = """
+            UI2NG57BB3
+            Confirmed.You have received Ksh10.00 from Hellen Odinga
+            0720***813 on 2/9/26 at 3:50 PM
+        """.trimIndent()
+        val parsed = parser.parseSms(text, "MPESA")
+        assertEquals(com.example.data.model.SmsType.MPESA_RECEIVED, parsed.type)
+        assertEquals("Ksh 10.00", parsed.amount)
+        assertEquals("Hellen Odinga", parsed.sender)
+        assertEquals("0720***813", parsed.phoneNumber)
+        assertEquals("UI2NG57BB3", parsed.transactionCode)
+    }
+
+    @Test
+    fun testRealMpesaFormat3PaidTo() {
+        val parser = com.example.engine.SmsParser()
+        val text = """
+            UI26M5NNUX
+            Confirmed.
+            Ksh60.00 paid to
+            MOSES NJUGUNA.
+            on 2/9/26 at 3:03
+            PM.
+        """.trimIndent()
+        val parsed = parser.parseSms(text, "MPESA")
+        assertEquals(com.example.data.model.SmsType.MPESA_PAID, parsed.type)
+        assertEquals("Ksh 60.00", parsed.amount)
+        assertEquals("MOSES NJUGUNA", parsed.recipient)
+        assertEquals("UI26M5NNUX", parsed.transactionCode)
+    }
+
+    @Test
+    fun testRealMpesaFormat4ReceivedMoney() {
+        val parser = com.example.engine.SmsParser()
+        val text = """
+            UI18C50ZXT
+            Confirmed.You have received Ksh50.00 from CELESTINE UNGUKU
+            0141***004 on 1/9/26 at 8:10 PM
+        """.trimIndent()
+        val parsed = parser.parseSms(text, "MPESA")
+        assertEquals(com.example.data.model.SmsType.MPESA_RECEIVED, parsed.type)
+        assertEquals("Ksh 50.00", parsed.amount)
+        assertEquals("CELESTINE UNGUKU", parsed.sender)
+        assertEquals("0141***004", parsed.phoneNumber)
+        assertEquals("UI18C50ZXT", parsed.transactionCode)
+    }
+
+    @Test
+    fun testRealCarrierUssdModalFromScreenshot() {
+        val rawUssd = """
+            0 ) Smarta 1000
+            1 ) 5GB @Ksh 250, 7 Days
+            2 ) 7days@Ksh80, 220Mins AnyNET
+            3 ) Amazing Data
+            4 ) Hourly Bundle
+            5 ) Tubonge + ALLNET
+            6 ) SMARTA
+            7 ) Kopa
+            * next
+        """.trimIndent()
+
+        val parsed = UssdParser.parse(rawUssd)
+        assertEquals(UssdResponseType.MENU, parsed.type)
+        assertEquals(9, parsed.options.size)
+        assertEquals("0", parsed.options[0].id)
+        assertEquals("Smarta 1000", parsed.options[0].label)
+        assertEquals("1", parsed.options[1].id)
+        assertEquals("5GB @Ksh 250, 7 Days", parsed.options[1].label)
+        assertEquals("*", parsed.options[8].id)
+        assertEquals("next", parsed.options[8].label)
+    }
+
+    @Test
+    fun testStructuredMenuOptionParsing() {
+        val rawUssd = """
+            0 ) Smarta 1000
+            1 ) 5GB @Ksh 250, 7 Days
+            2 ) 7days@Ksh80, 220Mins AnyNET
+            * next
+        """.trimIndent()
+
+        val structured = UssdParser.parseMenuOptions(rawUssd)
+        assertEquals(4, structured.size)
+        assertEquals("0", structured[0].number)
+        assertEquals("Smarta 1000", structured[0].label)
+        assertEquals("1", structured[1].number)
+        assertEquals("5GB @Ksh 250, 7 Days", structured[1].label)
+        assertEquals("*", structured[3].number)
+        assertEquals("next", structured[3].label)
+    }
 }

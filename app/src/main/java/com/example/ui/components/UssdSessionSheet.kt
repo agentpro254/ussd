@@ -608,7 +608,7 @@ private fun ActiveSessionContent(
                     onCancel = { option -> onSubmit(option) }
                 )
             }
-            UssdResponseType.INPUT_PROMPT, UssdResponseType.INFO, UssdResponseType.SUCCESS_RESULT, UssdResponseType.ERROR_RESULT -> {
+            UssdResponseType.INPUT_PROMPT, UssdResponseType.INFO, UssdResponseType.SUCCESS_RESULT, UssdResponseType.ERROR_RESULT, UssdResponseType.SINGLE_MESSAGE -> {
                 InputPromptView(
                     inputType = response.inputType,
                     inputHint = response.inputHint,

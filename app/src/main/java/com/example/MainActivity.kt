@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.util.Log
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -48,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.model.UssdSessionState
+import com.example.engine.UssdSessionManager
 import com.example.ui.components.OnboardingSetupGuideDialog
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
@@ -127,17 +130,35 @@ fun CodeeAppContent(
     var selectedTab by remember { mutableStateOf(CodeeTab.CODES) }
     var showCreateRoutineDialog by remember { mutableStateOf(false) }
 
-    // First-time onboarding guide state
-    val prefs = remember { context.getSharedPreferences("codee_user_prefs", android.content.Context.MODE_PRIVATE) }
-    var showFirstTimeOnboarding by remember {
-        mutableStateOf(!prefs.getBoolean("has_completed_onboarding", false))
-    }
-
     // Active in-app USSD interactive session state
     var activeSessionCode by remember { mutableStateOf<String?>(null) }
     var activeSessionTitle by remember { mutableStateOf("") }
     var activeSessionSubId by remember { mutableStateOf(-1) }
     var activeSessionSlotIndex by remember { mutableStateOf(0) }
+
+    // Observe global USSD session state to catch background dialogs and display them in app
+    val globalSessionState by UssdSessionManager.sessionState.collectAsState()
+    LaunchedEffect(globalSessionState) {
+        when (val s = globalSessionState) {
+            is UssdSessionState.Dialing -> {
+                activeSessionCode = s.code.ifBlank { activeSessionCode ?: "*USSD#" }
+                activeSessionTitle = if (activeSessionTitle.isNotBlank()) activeSessionTitle else "Dialing USSD..."
+                activeSessionSlotIndex = s.simSlot
+            }
+            is UssdSessionState.ActiveSession -> {
+                activeSessionCode = s.code.ifBlank { activeSessionCode ?: "USSD Session" }
+                activeSessionTitle = if (activeSessionTitle.isNotBlank() && activeSessionTitle != "Dialing USSD...") activeSessionTitle else "Carrier Menu"
+                activeSessionSlotIndex = s.simSlot
+            }
+            is UssdSessionState.Completed,
+            is UssdSessionState.Idle -> {
+                activeSessionCode = null
+                activeSessionTitle = ""
+                selectedTab = CodeeTab.CODES
+            }
+            else -> {}
+        }
+    }
 
     val savedRoutines by viewModel.savedRoutines.collectAsState()
     val permissionStatus by viewModel.permissionStatus.collectAsState()
@@ -166,163 +187,148 @@ fun CodeeAppContent(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            bottomBar = {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ) {
-                    CodeeTab.entries.forEach { tab ->
-                        val isSelected = selectedTab == tab
-                        val isPrimaryTab = tab == CodeeTab.CODES
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = { selectedTab = tab },
-                            icon = {
-                                if (isPrimaryTab) {
-                                    Icon(
-                                        imageVector = tab.icon,
-                                        contentDescription = tab.title,
-                                        tint = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = tab.icon,
-                                        contentDescription = tab.title,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            },
-                            label = {
-                                Text(
-                                    text = tab.title,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (isSelected || isPrimaryTab) FontWeight.Bold else FontWeight.Normal
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = TealPrimary,
-                                selectedTextColor = TealPrimary,
-                                indicatorColor = if (isPrimaryTab) Color.Transparent else TealPrimary.copy(alpha = 0.12f)
-                            ),
-                            modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
-                        )
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        ) { innerPadding ->
-            when (selectedTab) {
-                CodeeTab.CODES -> {
-                    HomeScreen(
-                        permissionStatus = permissionStatus,
-                        onRequestPhonePermissions = onRequestPhonePermissions,
-                        onDialCode = { code, title, subId, slotIndex ->
-                            // Launches internal in-app USSD viewer on selected SIM
-                            activeSessionCode = code
-                            activeSessionTitle = title
-                            activeSessionSubId = subId
-                            activeSessionSlotIndex = slotIndex
-                        },
-                        modifier = Modifier.padding(innerPadding)
+        if (activeSessionCode != null) {
+            // Dedicated full-screen session page (replaces floating card overlay)
+            UssdSessionScreen(
+                code = activeSessionCode!!,
+                title = activeSessionTitle,
+                subscriptionId = activeSessionSubId,
+                simSlotIndex = activeSessionSlotIndex,
+                onClose = {
+                    activeSessionCode = null
+                    activeSessionTitle = ""
+                    selectedTab = CodeeTab.CODES
+                    UssdSessionManager.dismissSession(context)
+                },
+                onSessionFinished = { finishedCode, summary, rawText ->
+                    viewModel.logCompletedSession(
+                        code = finishedCode,
+                        title = if (activeSessionTitle.isNotBlank()) activeSessionTitle else summary,
+                        rawResponse = rawText
                     )
-                }
-                CodeeTab.HISTORY -> {
-                    HistoryScreen(
-                        onDialCode = { code, title ->
-                            activeSessionCode = code
-                            activeSessionTitle = title
-                        },
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-                CodeeTab.CUSTOM -> {
-                    RoutinesScreen(
-                        routines = savedRoutines,
-                        onRunRoutine = { routine ->
-                            activeSessionCode = routine.ussdCode
-                            activeSessionTitle = routine.title
-                            viewModel.updateRoutineLastUsed(routine)
-                        },
-                        onToggleFavorite = { viewModel.toggleFavorite(it) },
-                        onDeleteRoutine = { viewModel.deleteRoutine(it.id) },
-                        onCreateNewClick = {
-                            showCreateRoutineDialog = true
-                        },
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-                CodeeTab.TRUST -> {
-                    TrustCenterScreen(
-                        status = permissionStatus,
-                        onRefreshPermissions = { viewModel.refreshPermissions() },
-                        onRequestPhonePermissions = onRequestPhonePermissions,
-                        currentThemeColor = currentThemeColor,
-                        onSelectThemeColor = { viewModel.setThemeColor(it) },
-                        currentDisplayScale = currentDisplayScale,
-                        onSelectDisplayScale = { viewModel.setDisplayScale(it) },
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-            }
-
-            if (showCreateRoutineDialog) {
-                com.example.ui.components.CreateRoutineDialog(
-                    onDismiss = { showCreateRoutineDialog = false },
-                    onSave = { title, code, category, stepsCsv, iconName, colorHex, desc ->
-                        viewModel.saveRoutine(
-                            title = title,
-                            code = code,
-                            category = category,
-                            stepsCsv = stepsCsv,
-                            iconName = iconName,
-                            colorHex = colorHex,
-                            description = desc
-                        )
-                        showCreateRoutineDialog = false
-                    }
-                )
-            }
-        }
-
-        // Full-screen in-app live USSD session view
-        AnimatedVisibility(
-            visible = activeSessionCode != null,
-            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-        ) {
-            activeSessionCode?.let { code ->
-                UssdSessionScreen(
-                    code = code,
-                    title = activeSessionTitle,
-                    subscriptionId = activeSessionSubId,
-                    simSlotIndex = activeSessionSlotIndex,
-                    onClose = {
-                        activeSessionCode = null
-                        activeSessionTitle = ""
-                    },
-                    onSessionFinished = { finishedCode, summary, rawText ->
-                        viewModel.logCompletedSession(
-                            code = finishedCode,
-                            title = if (activeSessionTitle.isNotBlank()) activeSessionTitle else summary,
-                            rawResponse = rawText
-                        )
-                    }
-                )
-            }
-        }
-
-        // First-Time Onboarding & Setup Guide Dialog
-        if (showFirstTimeOnboarding) {
-            OnboardingSetupGuideDialog(
-                status = permissionStatus,
-                onRequestPhonePermissions = onRequestPhonePermissions,
-                onDismiss = {
-                    showFirstTimeOnboarding = false
-                    prefs.edit().putBoolean("has_completed_onboarding", true).apply()
-                }
+                },
+                modifier = Modifier.fillMaxSize()
             )
+        } else {
+            Scaffold(
+                bottomBar = {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        CodeeTab.entries.forEach { tab ->
+                            val isSelected = selectedTab == tab
+                            val isPrimaryTab = tab == CodeeTab.CODES
+                            NavigationBarItem(
+                                selected = isSelected,
+                                onClick = { selectedTab = tab },
+                                icon = {
+                                    if (isPrimaryTab) {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.title,
+                                            tint = if (isSelected) TealPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.title,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        text = tab.title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected || isPrimaryTab) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = TealPrimary,
+                                    selectedTextColor = TealPrimary,
+                                    indicatorColor = if (isPrimaryTab) Color.Transparent else TealPrimary.copy(alpha = 0.12f)
+                                ),
+                                modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
+                            )
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) { innerPadding ->
+                when (selectedTab) {
+                    CodeeTab.CODES -> {
+                        HomeScreen(
+                            permissionStatus = permissionStatus,
+                            onRequestPhonePermissions = onRequestPhonePermissions,
+                            onDialCode = { code, title, subscriptionId, slotIndex ->
+                                Log.d("DIAL_DEBUG", "MainActivity received onDialCode: code=$code, subId=$subscriptionId, slot=$slotIndex")
+                                activeSessionCode = code
+                                activeSessionTitle = title
+                                activeSessionSubId = subscriptionId
+                                activeSessionSlotIndex = slotIndex
+                            },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                    CodeeTab.HISTORY -> {
+                        HistoryScreen(
+                            onDialCode = { code, title ->
+                                activeSessionCode = code
+                                activeSessionTitle = title
+                            },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                    CodeeTab.CUSTOM -> {
+                        RoutinesScreen(
+                            routines = savedRoutines,
+                            onRunRoutine = { routine ->
+                                activeSessionCode = routine.ussdCode
+                                activeSessionTitle = routine.title
+                                viewModel.updateRoutineLastUsed(routine)
+                            },
+                            onToggleFavorite = { viewModel.toggleFavorite(it) },
+                            onDeleteRoutine = { viewModel.deleteRoutine(it.id) },
+                            onCreateNewClick = {
+                                showCreateRoutineDialog = true
+                            },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                    CodeeTab.TRUST -> {
+                        TrustCenterScreen(
+                            status = permissionStatus,
+                            onRefreshPermissions = { viewModel.refreshPermissions() },
+                            onRequestPhonePermissions = onRequestPhonePermissions,
+                            currentThemeColor = currentThemeColor,
+                            onSelectThemeColor = { viewModel.setThemeColor(it) },
+                            currentDisplayScale = currentDisplayScale,
+                            onSelectDisplayScale = { viewModel.setDisplayScale(it) },
+                            modifier = Modifier.padding(innerPadding)
+                        )
+                    }
+                }
+
+                if (showCreateRoutineDialog) {
+                    com.example.ui.components.CreateRoutineDialog(
+                        onDismiss = { showCreateRoutineDialog = false },
+                        onSave = { title, code, category, stepsCsv, iconName, colorHex, desc ->
+                            viewModel.saveRoutine(
+                                title = title,
+                                code = code,
+                                category = category,
+                                stepsCsv = stepsCsv,
+                                iconName = iconName,
+                                colorHex = colorHex,
+                                description = desc
+                            )
+                            showCreateRoutineDialog = false
+                        }
+                    )
+                }
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.example.engine
 
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -11,9 +12,8 @@ import android.util.Log
 import java.lang.reflect.Method
 
 /**
- * Helper class that uses Java reflection to access the hidden
- * `com.android.internal.telephony.ITelephony` interface.
- * Enables background USSD requests without opening the system dialer UI.
+ * Helper class that handles USSD requests using official TelephonyManager on Android O+
+ * and graceful fallback without violating Android 9+ Hidden API restrictions.
  */
 object ITelephonyReflection {
 
@@ -26,7 +26,7 @@ object ITelephonyReflection {
     }
 
     /**
-     * Executes a background USSD request via ITelephony reflection.
+     * Executes a background USSD request via official SDK or legacy reflection.
      */
     fun sendUssdRequest(
         context: Context,
@@ -48,8 +48,8 @@ object ITelephonyReflection {
     }
 
     /**
-     * Attempts to execute USSD via internal com.android.internal.telephony.ITelephony reflection.
-     * Returns true if invocation succeeded, false if reflection failed.
+     * Attempts to execute USSD. On Android 8.0+ (API 26+), uses official public TelephonyManager.sendUssdRequest.
+     * On Android 9.0+ (API 28+), bypasses blocked hidden API reflection.
      */
     fun sendUssdViaReflection(
         context: Context,
@@ -57,6 +57,58 @@ object ITelephonyReflection {
         subId: Int = -1,
         callback: ReflectionCallback? = null
     ): Boolean {
+        // 1. On Android O (API 26) and above, use the official, public TelephonyManager.sendUssdRequest API
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                if (tm != null) {
+                    val telephonyManager = if (subId >= 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        tm.createForSubscriptionId(subId)
+                    } else {
+                        tm
+                    }
+                    telephonyManager.sendUssdRequest(
+                        ussdCode,
+                        object : TelephonyManager.UssdResponseCallback() {
+                            override fun onReceiveUssdResponse(
+                                telephonyManager: TelephonyManager?,
+                                request: String?,
+                                response: CharSequence?
+                            ) {
+                                val resp = response?.toString() ?: ""
+                                Log.d(TAG, "✅ Official TelephonyManager.sendUssdRequest response: $resp")
+                                if (resp.isNotBlank()) {
+                                    callback?.onSuccess(resp)
+                                }
+                            }
+
+                            override fun onReceiveUssdResponseFailed(
+                                telephonyManager: TelephonyManager?,
+                                request: String?,
+                                failureCode: Int
+                            ) {
+                                Log.w(TAG, "⚠️ TelephonyManager.sendUssdRequest failureCode: $failureCode")
+                                callback?.onError("USSD failed with code: $failureCode")
+                            }
+                        },
+                        Handler(Looper.getMainLooper())
+                    )
+                    return true
+                }
+            } catch (e: SecurityException) {
+                Log.w(TAG, "SecurityException in official sendUssdRequest: ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Exception in official sendUssdRequest: ${e.message}")
+            }
+        }
+
+        // 2. On Android 9.0+ (API 28+), TelephonyManager.getITelephony is blocked by hiddenapi enforcement
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Log.d(TAG, "Skipping hidden ITelephony reflection on Android 9+ (blocked API)")
+            return false
+        }
+
+        // 3. Legacy reflection for older Android versions (API < 28)
         try {
             val iTelephony = getITelephonyInstance(context) ?: run {
                 Log.w(TAG, "Unable to obtain ITelephony instance")
@@ -64,9 +116,8 @@ object ITelephonyReflection {
                 return false
             }
 
-            Log.d(TAG, "🔍 Retrieved ITelephony instance: ${iTelephony.javaClass.name}")
+            Log.d(TAG, "🔍 Retrieved legacy ITelephony instance: ${iTelephony.javaClass.name}")
 
-            // Prepare ResultReceiver for callbacks
             val resultReceiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
                 override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
                     val response = resultData?.getCharSequence("UssdResponse")?.toString()
@@ -82,10 +133,8 @@ object ITelephonyReflection {
                 }
             }
 
-            // Try different ITelephony method signatures across Android versions & OEMs
             val methods = iTelephony.javaClass.declaredMethods
 
-            // 1. sendUssdRequest(subId, ussdCode, resultReceiver)
             val sendUssdWithSub = methods.firstOrNull { 
                 it.name == "sendUssdRequest" && it.parameterTypes.size == 3 && 
                 (it.parameterTypes[0] == Int::class.javaPrimitiveType || it.parameterTypes[0] == Integer::class.java) 
@@ -97,7 +146,6 @@ object ITelephonyReflection {
                 return true
             }
 
-            // 2. sendUssdRequest(ussdCode, resultReceiver)
             val sendUssdBasic = methods.firstOrNull { 
                 it.name == "sendUssdRequest" && it.parameterTypes.size == 2 && 
                 it.parameterTypes[0] == String::class.java 
@@ -109,7 +157,6 @@ object ITelephonyReflection {
                 return true
             }
 
-            // 3. handlePinMmiForSubscriber(subId, dialString)
             val handlePinMmiSub = methods.firstOrNull {
                 it.name == "handlePinMmiForSubscriber" && it.parameterTypes.size == 2
             }
@@ -120,7 +167,6 @@ object ITelephonyReflection {
                 return true
             }
 
-            // 4. handlePinMmi(dialString)
             val handlePinMmi = methods.firstOrNull {
                 it.name == "handlePinMmi" && it.parameterTypes.size == 1
             }
@@ -131,20 +177,24 @@ object ITelephonyReflection {
                 return true
             }
 
-            Log.w(TAG, "No matching ITelephony USSD method found on this device")
+            Log.w(TAG, "No matching ITelephony USSD method found on this legacy device")
             callback?.onError("No matching ITelephony USSD method")
             return false
         } catch (e: Exception) {
-            Log.e(TAG, "Exception in ITelephony reflection: ${e.message}", e)
+            Log.e(TAG, "Exception in legacy reflection: ${e.message}", e)
             callback?.onError(e.message ?: "Reflection exception")
             return false
         }
     }
 
     /**
-     * Resolves com.android.internal.telephony.ITelephony via TelephonyManager or ServiceManager.
+     * Resolves com.android.internal.telephony.ITelephony for legacy devices (Android < 9).
      */
     private fun getITelephonyInstance(context: Context): Any? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return null
+        }
+
         // Strategy 1: TelephonyManager.getITelephony()
         try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager

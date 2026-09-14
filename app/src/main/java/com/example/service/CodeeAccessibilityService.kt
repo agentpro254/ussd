@@ -2,8 +2,15 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -17,43 +24,16 @@ class CodeeAccessibilityService : AccessibilityService() {
         private var ussdCallback: ((String) -> Unit)? = null
         private var inputCallback: ((String) -> Unit)? = null
 
-        // Comprehensive HashSet of global OEM dialers, AOSP, and OEM UI packages
-        private val DIALER_PACKAGES = hashSetOf(
-            // Google / Pixel / AOSP
-            "com.google.android.dialer",
-            "com.google.android.apps.messaging",
+        val ALLOWED_DIALERS = setOf(
             "com.android.phone",
+            "com.google.android.dialer",
             "com.android.incallui",
-            "com.android.server.telecom",
-
-            // Samsung
-            "com.samsung.android.dialer",
-            "com.samsung.android.incallui",
-
-            // Xiaomi, Redmi, POCO
-            "com.xiaomi.contacts",
-
-            // Oppo, Realme, OnePlus
-            "com.oplus.dialer",
-            "com.coloros.dialer",
-            "com.heytap.dialer",
-            "com.oneplus.dialer",
-
-            // Huawei & Honor
-            "com.huawei.incallui",
-            "com.hihonor.incallui",
-
-            // Transsion (Tecno, Infinix, itel)
-            "com.transsion.dialer",
-            "com.transsion.telecom",
-            "com.itel.dialer",
-            "com.infinix.dialer",
-            "com.sh.smart.caller"
+            "com.android.server.telecom"
         )
 
         fun getInstance(): CodeeAccessibilityService? = instance
 
-        fun setUssdCallback(callback: (String) -> Unit) {
+        fun setUssdCallback(callback: ((String) -> Unit)?) {
             ussdCallback = callback
         }
 
@@ -74,8 +54,89 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     private var isProcessing = false
     private var lastUssdText = ""
+    private var lastUssdTextNormalized = ""
     private var lastUssdTime = 0L
-    private val DEBOUNCE_TIME = 1000L // 1 second debounce
+    private val DEBOUNCE_TIME = 2000L // 2 seconds debounce
+
+    private fun normalizeForDebounce(text: String): String {
+        return text
+            // Strip timestamps (e.g., 12:34:56, 12:34, 2024-01-01)
+            .replace(Regex("""\b\d{1,2}:\d{2}(?::\d{2})?\b"""), "")
+            .replace(Regex("""\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b"""), "")
+            .replace(Regex("""\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b"""), "")
+            // Strip transaction codes, reference numbers, receipts
+            .replace(Regex("""(?i)\b(?:tx|txn|ref|trans|id|code|receipt)\s*[:#]?\s*[A-Z0-9]{5,}\b"""), "")
+            .replace(Regex("""\b[A-Z0-9]{8,}\b"""), "")
+            // Collapse whitespace
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .lowercase()
+    }
+
+    /**
+     * Dynamically detects the active system dialer and telephony package(s)
+     * using TelecomManager, PackageManager, ActivityManager, and TelephonyManager.
+     */
+    fun getDynamicDialerPackages(): Set<String> {
+        val packages = mutableSetOf<String>()
+
+        // 1. TelecomManager default dialer & system dialer
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val telecomManager = getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                telecomManager?.defaultDialerPackage?.let { if (it.isNotBlank()) packages.add(it) }
+                telecomManager?.systemDialerPackage?.let { if (it.isNotBlank()) packages.add(it) }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Telecom dialer query error: ${e.message}")
+        }
+
+        // 2. PackageManager intent resolution for dial and call
+        try {
+            val dialIntent = Intent(Intent.ACTION_DIAL)
+            val dialResolves = packageManager.queryIntentActivities(dialIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolve in dialResolves) {
+                resolve.activityInfo?.packageName?.let { packages.add(it) }
+            }
+            val allDialResolves = packageManager.queryIntentActivities(dialIntent, 0)
+            for (resolve in allDialResolves) {
+                resolve.activityInfo?.packageName?.let { packages.add(it) }
+            }
+
+            val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:123"))
+            val callResolves = packageManager.queryIntentActivities(callIntent, 0)
+            for (resolve in callResolves) {
+                resolve.activityInfo?.packageName?.let { packages.add(it) }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "PackageManager dialer query error: ${e.message}")
+        }
+
+        // 3. ActivityManager active telephony & dialer processes
+        try {
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            activityManager?.runningAppProcesses?.forEach { process ->
+                val pName = process.processName.lowercase()
+                if (pName.contains("phone") ||
+                    pName.contains("dialer") ||
+                    pName.contains("telecom") ||
+                    pName.contains("incall") ||
+                    pName.contains("stk")
+                ) {
+                    process.pkgList?.forEach { packages.add(it) }
+                    packages.add(process.processName.substringBefore(":"))
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "ActivityManager running processes query error: ${e.message}")
+        }
+
+        // 4. TelephonyManager default system packages
+        packages.add("com.android.phone")
+        packages.add("android")
+
+        return packages
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -108,83 +169,66 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val pkg = event.packageName?.toString() ?: ""
-        val eventType = event.eventType
-
-        val isDialerEvent = DIALER_PACKAGES.contains(pkg) ||
-                pkg.contains("phone", ignoreCase = true) ||
-                pkg.contains("dialer", ignoreCase = true) ||
-                pkg.contains("incall", ignoreCase = true) ||
-                pkg.contains("telecom", ignoreCase = true) ||
-                pkg.contains("mmi", ignoreCase = true) ||
-                pkg == "android"
-
-        // Log diagnostic events for debugging
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-            eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            if (isDialerEvent) {
-                Log.d("ACCESS_DEBUG", "Dialer event: type=$eventType, pkg=$pkg")
-                // Cover system popup immediately
-                bringAppToFront()
-            }
+        // Do NOT gate on event.packageName. The USSD dialog event may come from
+        // "android" or a child window with a null package. We rely on the window
+        // scan (findUssdDialogInWindows) to filter by real dialer package.
+        val dialog = findUssdDialogInWindows(event.source)
+        if (dialog != null) {
+            val (text, rootNode) = dialog
+            Log.d("ACCESS_DEBUG", "USSD dialog captured from dialer: $text")
+            bringAppToFront()
+            processUssdResponse(text, rootNode)
         }
+    }
 
-        // 1. Try event source
-        val eventSource = event.source
-        if (eventSource != null) {
-            val text = extractUssdText(eventSource)
-            if (!text.isNullOrEmpty() && (isDialerEvent || isUssdDialog(eventSource) || hasUssdKeywords(text))) {
-                Log.d("ACCESS_DEBUG", "Found dialog: " + text)
-                processUssdResponse(text, eventSource)
-                return
-            }
-        }
-
-        // 2. Try root in active window
-        val root = rootInActiveWindow
-        if (root != null) {
-            val text = extractUssdText(root)
-            val rootPkg = root.packageName?.toString() ?: ""
-            val isRootDialer = DIALER_PACKAGES.contains(rootPkg) ||
-                    rootPkg.contains("phone", ignoreCase = true) ||
-                    rootPkg.contains("dialer", ignoreCase = true) ||
-                    rootPkg.contains("incall", ignoreCase = true) ||
-                    rootPkg.contains("telecom", ignoreCase = true) ||
-                    rootPkg == "android"
-
-            if (!text.isNullOrEmpty() && (isRootDialer || isUssdDialog(root) || hasUssdKeywords(text))) {
-                Log.d("ACCESS_DEBUG", "Found dialog: " + text)
-                processUssdResponse(text, root)
-                return
-            }
-        }
-
-        // 3. Search interactive background windows (for hidden dialing / covered dialog strategy)
+    /**
+     * Iterates through all available interactive windows to find the system USSD dialog.
+     * ONLY inspects windows whose packageName is in ALLOWED_DIALERS.
+     * Skips any window with a null/blank package name.
+     */
+    fun findUssdDialogInWindows(eventSource: AccessibilityNodeInfo? = null): Pair<String, AccessibilityNodeInfo>? {
         try {
-            val currentWindows = windows
-            for (window in currentWindows) {
-                val windowRoot = window.root ?: continue
-                val windowPkg = windowRoot.packageName?.toString() ?: ""
-                val text = extractUssdText(windowRoot)
+            val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
 
-                val isWinDialer = DIALER_PACKAGES.contains(windowPkg) ||
-                        windowPkg.contains("phone", ignoreCase = true) ||
-                        windowPkg.contains("dialer", ignoreCase = true) ||
-                        windowPkg.contains("incall", ignoreCase = true) ||
-                        windowPkg.contains("telecom", ignoreCase = true) ||
-                        windowPkg == "android"
-
-                if (!text.isNullOrEmpty() && (isWinDialer || isUssdDialog(windowRoot) || hasUssdKeywords(text))) {
-                    Log.d("ACCESS_DEBUG", "Found dialog: " + text)
-                    processUssdResponse(text, windowRoot)
-                    return
+            // 1. All interactive windows (this is where the real dialer dialog lives)
+            try {
+                for (window in windows) {
+                    val wRoot = window.root ?: continue
+                    candidateRoots.add(wRoot)
                 }
+            } catch (e: Exception) {
+                Log.d(TAG, "Error listing windows: ${e.message}")
+            }
+
+            // 2. Add active root and event source as fallback
+            rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
+            eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
+
+            for (windowRoot in candidateRoots) {
+                val windowPkg = windowRoot.packageName?.toString()
+
+                // STRICT: skip any window that is not the real system dialer.
+                if (windowPkg.isNullOrBlank()) continue
+                if (!ALLOWED_DIALERS.contains(windowPkg)) continue
+                if (windowPkg.startsWith("com.aistudio") ||
+                    windowPkg.startsWith("com.example") ||
+                    windowPkg.contains("codee", ignoreCase = true)) continue
+
+                // Extract the full visible text of the dialer card
+                val text = extractUssdText(windowRoot) ?: continue
+                if (text.isBlank()) continue
+
+                // Require at least one numbered menu line OR a strict USSD keyword.
+                if (!hasNumberedMenuLines(text) && !hasUssdKeywords(text)) continue
+
+                Log.d("ACCESS_DEBUG", "Found real USSD dialog in WINDOWS: $text")
+                bringAppToFront()
+                return Pair(text, windowRoot)
             }
         } catch (e: Exception) {
             Log.d(TAG, "Could not inspect all windows: ${e.message}")
         }
+        return null
     }
 
     /**
@@ -194,74 +238,53 @@ class CodeeAccessibilityService : AccessibilityService() {
     fun bringAppToFront() {
         try {
             val bringIntent = Intent(this, com.example.MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
             startActivity(bringIntent)
-            Log.d(TAG, "📲 Reordered MainActivity to front to cover system dialog")
+            Log.d("ACCESS_DEBUG", "📲 Reordered MainActivity to front to cover system dialog")
         } catch (e: Exception) {
             Log.w(TAG, "Could not bring MainActivity to front: ${e.message}")
         }
     }
 
-    private fun hasUssdKeywords(text: String): Boolean {
-        val lower = text.lowercase()
-        return lower.contains("m-pesa") ||
-                lower.contains("safaricom") ||
-                lower.contains("airtel") ||
-                lower.contains("telkom") ||
-                lower.contains("balance") ||
-                lower.contains("account") ||
-                lower.contains("pin") ||
-                lower.contains("enter ") ||
-                lower.contains("reply") ||
-                lower.contains("select") ||
-                lower.contains("send money") ||
-                lower.contains("airtime") ||
-                lower.contains("bundles") ||
-                lower.contains("ksh") ||
-                lower.contains("kes") ||
-                lower.contains("con ") ||
-                lower.contains("end ") ||
-                text.lines().any { line ->
-                    val t = line.trim()
-                    t.startsWith("1.") || t.startsWith("1:") || t.startsWith("1 ") ||
-                    t.startsWith("0.") || t.startsWith("0:") || t.startsWith("0 ")
+    private fun hasNumberedMenuLines(text: String): Boolean {
+        return text.lines().any { line ->
+            val t = line.trim()
+            if (t.isEmpty()) return@any false
+
+            // Check for digit-based menu items (e.g. "0 )", "1 )", "0)", "1)", "0.", "1.", "1:", "1 -", "1 ")
+            if (t[0].isDigit()) {
+                if (t.length >= 2 && (t[1] == ')' || t[1] == '.' || t[1] == ':' || t[1] == '-' || t[1] == ' ')) return@any true
+                if (t.length >= 3 && t[1] == ' ' && t[2] == ')') return@any true
+                if (t.length >= 3 && t[1].isDigit() && (t[2] == ')' || t[2] == '.' || t[2] == ':' || t[2] == '-' || t[2] == ' ')) return@any true
+                if (t.length >= 4 && t[1].isDigit() && t[2] == ' ' && t[3] == ')') return@any true
+            }
+
+            // Check for navigation menu items (e.g. "* next", "# next", "*back", "#back", "*", "#")
+            if (t.startsWith("*") || t.startsWith("#")) {
+                val lower = t.lowercase()
+                if (lower.contains("next") || lower.contains("back") || lower.contains("more") || t.length <= 4) {
+                    return@any true
                 }
+            }
+
+            false
+        }
     }
 
-    private fun isUssdDialog(node: AccessibilityNodeInfo): Boolean {
-        val packageName = node.packageName?.toString() ?: ""
-
-        // 1. Check if it matches known global dialers or keyword heuristics
-        val isKnownDialer = DIALER_PACKAGES.contains(packageName) ||
-                packageName.contains("phone", ignoreCase = true) ||
-                packageName.contains("dialer", ignoreCase = true) ||
-                packageName.contains("incall", ignoreCase = true) ||
-                packageName.contains("telecom", ignoreCase = true) ||
-                packageName.contains("mmi", ignoreCase = true) ||
-                packageName == "android"
-
-        // 2. Generic AlertDialog fallback (catches custom OEM dialog popups regardless of brand)
-        val className = node.className?.toString() ?: ""
-        val isDialog = className.contains("AlertDialog", ignoreCase = true) ||
-                className.contains("Dialog", ignoreCase = true) ||
-                className.contains("Alert", ignoreCase = true)
-
-        // 3. Check for input field or send button inside the hierarchy
-        val hasInputOrSend = findInputField(node) != null || findSendButton(node) != null
-
-        // 4. Check for typical USSD content indicators
-        val text = node.text?.toString() ?: ""
-        val hasUssdContent = hasUssdKeywords(text) || text.contains("*") || text.contains("#")
-
-        if (isDialog && hasInputOrSend) return true
-        if (isKnownDialer && hasInputOrSend) return true
-        if (isKnownDialer && (hasUssdContent || node.childCount > 0)) return true
-        if (isDialog && hasUssdContent) return true
-
-        return false
+    private fun hasUssdKeywords(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("enter") ||
+                lower.contains("reply") ||
+                lower.contains("select") ||
+                lower.contains("press") ||
+                lower.contains("confirm") ||
+                lower.contains("pin") ||
+                lower.contains("session") ||
+                lower.contains("invalid") ||
+                lower.contains("mmi") ||
+                lower.contains("con") ||
+                lower.contains("end")
     }
 
     private fun extractUssdText(node: AccessibilityNodeInfo): String? {
@@ -269,10 +292,11 @@ class CodeeAccessibilityService : AccessibilityService() {
         extractTextFromNode(node, textBuilder)
         val fullText = textBuilder.toString()
 
-        // Clean up the text
-        val cleanedText = fullText
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        // Clean up each line while preserving newlines for proper menu/option display
+        val lines = fullText.split('\n')
+            .map { it.replace(Regex("[ \\t]+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+        val cleanedText = lines.joinToString("\n")
 
         if (cleanedText.isEmpty()) return null
         if (cleanedText.length < 3) return null
@@ -302,14 +326,16 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     private fun processUssdResponse(text: String, rootNode: AccessibilityNodeInfo) {
         val currentTime = System.currentTimeMillis()
+        val normalized = normalizeForDebounce(text)
 
         // Debounce to prevent duplicate processing / loops
-        if (text == lastUssdText && currentTime - lastUssdTime < DEBOUNCE_TIME) {
-            Log.d(TAG, "⏳ Debouncing duplicate USSD text")
+        if (normalized == lastUssdTextNormalized && currentTime - lastUssdTime < DEBOUNCE_TIME) {
+            Log.d(TAG, "⏳ Debouncing duplicate USSD text: $normalized")
             return
         }
 
         lastUssdText = text
+        lastUssdTextNormalized = normalized
         lastUssdTime = currentTime
 
         Log.d(TAG, "📱 USSD Response captured: $text")
@@ -330,6 +356,11 @@ class CodeeAccessibilityService : AccessibilityService() {
 
         // Trigger in-app callback
         ussdCallback?.invoke(text)
+
+        if (text.length < 3) {
+            Log.w("USSD_LOOP", "Ignoring short text: '$text'")
+            return
+        }
 
         // Find input nodes and notify session manager if active
         val inputNode = findInputField(rootNode)
@@ -435,12 +466,12 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     private fun findInputField(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val className = node.className?.toString() ?: ""
-        if (className.contains("EditText", ignoreCase = true) || className.contains("Input", ignoreCase = true) || node.isEditable) {
+        if (node.isEditable || className.contains("EditText", ignoreCase = true)) {
             return node
         }
 
         val viewId = node.viewIdResourceName?.lowercase() ?: ""
-        if (viewId.contains("input") || viewId.contains("edit") || viewId.contains("text")) {
+        if ((viewId.contains("input") || viewId.contains("edit")) && !className.contains("TextView", ignoreCase = true)) {
             return node
         }
 

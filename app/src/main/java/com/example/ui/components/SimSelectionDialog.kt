@@ -1,5 +1,11 @@
 package com.example.ui.components
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,9 +34,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -38,16 +46,75 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.SimCardInfo
 
+/**
+ * Dynamically queries SubscriptionManager for all active SIM subscriptions on the device.
+ */
+fun getActiveSimCardsFromSubscriptionManager(context: Context): List<SimCardInfo> {
+    val simList = mutableListOf<SimCardInfo>()
+    try {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasPermission) {
+            val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+            if (subscriptionManager != null) {
+                val activeList: List<SubscriptionInfo>? = subscriptionManager.activeSubscriptionInfoList
+                if (!activeList.isNullOrEmpty()) {
+                    for (info in activeList) {
+                        simList.add(
+                            SimCardInfo(
+                                slotIndex = info.simSlotIndex,
+                                carrierName = info.carrierName?.toString() ?: "SIM ${info.simSlotIndex + 1}",
+                                displayName = info.displayName?.toString() ?: "SIM ${info.simSlotIndex + 1}",
+                                subscriptionId = info.subscriptionId,
+                                isAvailable = true
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("SimSelectionDialog", "Error accessing SubscriptionManager: ${e.message}")
+    }
+    return simList
+}
+
 @Composable
 fun SimSelectionDialog(
     codeToDial: String,
-    simCards: List<SimCardInfo>,
     onSelectSim: (simSlot: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val displaySims = if (simCards.isNotEmpty()) simCards else listOf(
-        SimCardInfo(slotIndex = 0, carrierName = "SIM 1 (Safaricom)", displayName = "SIM 1"),
-        SimCardInfo(slotIndex = 1, carrierName = "SIM 2 (Airtel)", displayName = "SIM 2")
+    SimSelectionDialog(
+        codeToDial = codeToDial,
+        simCards = emptyList(),
+        onSelectSim = onSelectSim,
+        onDismiss = onDismiss
+    )
+}
+
+@Composable
+fun SimSelectionDialog(
+    codeToDial: String,
+    simCards: List<SimCardInfo> = emptyList(),
+    onSelectSim: (simSlot: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val dynamicSims = remember(simCards) {
+        if (simCards.isNotEmpty()) {
+            simCards
+        } else {
+            getActiveSimCardsFromSubscriptionManager(context)
+        }
+    }
+
+    val displaySims = if (dynamicSims.isNotEmpty()) dynamicSims else listOf(
+        SimCardInfo(slotIndex = 0, carrierName = "SIM 1", displayName = "SIM 1", subscriptionId = 0),
+        SimCardInfo(slotIndex = 1, carrierName = "SIM 2", displayName = "SIM 2", subscriptionId = 1)
     )
 
     AlertDialog(

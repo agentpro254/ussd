@@ -137,15 +137,6 @@ object PermissionManager {
                     isAvailable = true
                 )
             )
-            simList.add(
-                SimCardInfo(
-                    slotIndex = 1,
-                    carrierName = "SIM 2",
-                    displayName = "SIM 2 (Secondary)",
-                    subscriptionId = 1,
-                    isAvailable = true
-                )
-            )
         }
         return simList
     }

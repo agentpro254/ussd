@@ -1,6 +1,7 @@
 package com.example.engine
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.data.local.AppDatabase
@@ -14,6 +15,7 @@ import com.example.data.model.UssdSessionState
 import com.example.data.parser.UssdParser
 import com.example.service.CodeeAccessibilityService
 import com.example.service.CodeeOverlayService
+import com.example.ui.TransparentActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,6 +55,7 @@ object UssdSessionManager {
     // Anti-Loop & Concurrency Locks
     private var isSessionRunning = false
     private var dialAttempts = 0
+    private var capturedResponseCount = 0
 
     private var database: AppDatabase? = null
 
@@ -64,9 +67,16 @@ object UssdSessionManager {
         activeAccessibilityService = if (service != null) WeakReference(service) else null
     }
 
-    fun isSessionActive(): Boolean {
-        return isSessionRunning || _sessionState.value !is UssdSessionState.Idle
-    }
+    var isSessionActive: Boolean
+        get() = isSessionRunning || _sessionState.value !is UssdSessionState.Idle
+        set(value) {
+            isSessionRunning = value
+            if (value && _sessionState.value is UssdSessionState.Idle) {
+                _sessionState.value = UssdSessionState.Dialing(currentSessionCode, currentSimSlot)
+            } else if (!value) {
+                _sessionState.value = UssdSessionState.Idle
+            }
+        }
 
     fun resetAttemptCounters() {
         dialAttempts = 0
@@ -80,7 +90,8 @@ object UssdSessionManager {
         rawCode: String,
         simSlot: Int = 0,
         automatedSteps: List<String> = emptyList(),
-        userInitiated: Boolean = true
+        userInitiated: Boolean = true,
+        skipTransparentActivityLaunch: Boolean = false
     ) {
         val cleanCode = rawCode.trim()
 
@@ -122,6 +133,7 @@ object UssdSessionManager {
         }
 
         dialAttempts++
+        capturedResponseCount = 0
         isSessionRunning = true
         currentSessionCode = cleanCode
         currentSessionStartTime = System.currentTimeMillis()
@@ -143,9 +155,6 @@ object UssdSessionManager {
 
         // Set state to Dialing with live flow
         _sessionState.value = UssdSessionState.Dialing(cleanCode, simSlot, activeFlow = flow)
-
-        // Start overlay service so Codee floating UI can appear
-        CodeeOverlayService.start(context)
 
         // Start timeout timer (30 seconds) that is cancelled immediately upon response
         timeoutManager.startTimeout(TIMEOUT_DURATION_MS) {
@@ -179,55 +188,68 @@ object UssdSessionManager {
         }
 
         // Execute internal USSD Request to the carrier network
-        RealUssdHandler.dialCode(
-            context = context,
-            code = cleanCode,
-            simSlot = simSlot,
-            callback = object : UssdCallback {
-                override fun onResponse(response: String) {
-                    // Response received: cancel timeout immediately
-                    timeoutManager.markResponseReceived()
-                    Log.i(TAG, "Real carrier response received: $response")
-                    handleCarrierResponse(response, isTerminalOverride = false)
-                }
+        // Immediately launch TransparentActivity (via ACTION_CALL) to send USSD code to carrier
+        if (!skipTransparentActivityLaunch) {
+            launchTransparentActivity(context, cleanCode, simSlot)
+        }
 
-                override fun onError(error: String) {
-                    timeoutManager.cancelTimeout()
-                    Log.w(TAG, "Carrier error / dial failure: $error")
-                    onSessionEnd()
-                    val duration = System.currentTimeMillis() - currentSessionStartTime
-                    val finalFlow = flow.copy(
-                        status = FlowStatus.FAILED,
-                        endTime = System.currentTimeMillis(),
-                        finalSummary = error
-                    )
-                    _currentFlow.value = finalFlow
-                    val errorParsed = ParsedUssdResponse(
-                        type = com.example.data.model.UssdResponseType.ERROR_RESULT,
-                        title = "Carrier Service Notice",
-                        body = error,
-                        isTerminal = true,
-                        isSuccess = false
-                    )
-                    _sessionState.value = UssdSessionState.Completed(
-                        code = cleanCode,
-                        summary = error,
-                        response = errorParsed,
-                        flow = finalFlow,
-                        historySteps = currentStepLogs.toList(),
-                        isSuccess = false,
-                        durationMs = duration
-                    )
-                    saveHistoryToDatabase(errorParsed, isSuccess = false, isSimulation = false, flow = finalFlow)
+        // Parallel reflection attempt
+        try {
+            ITelephonyReflection.sendUssdViaReflection(
+                context = context,
+                ussdCode = cleanCode,
+                subId = -1,
+                callback = object : ITelephonyReflection.ReflectionCallback {
+                    override fun onSuccess(response: String) {
+                        timeoutManager.markResponseReceived()
+                        Log.i(TAG, "Carrier reflection response received: $response")
+                        handleCarrierResponse(response, isTerminalOverride = false)
+                    }
+
+                    override fun onError(error: String) {
+                        Log.w(TAG, "Carrier reflection error: $error")
+                    }
                 }
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "ITelephonyReflection exception: ${e.message}")
+        }
+    }
+
+    fun launchTransparentActivity(context: Context, code: String, simSlot: Int = 0) {
+        try {
+            val intent = Intent(context, TransparentActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(TransparentActivity.EXTRA_USSD_CODE, code)
+                putExtra(TransparentActivity.EXTRA_SLOT_INDEX, simSlot)
             }
-        )
+            context.startActivity(intent)
+            Log.d(TAG, "🚀 Fallback launched TransparentActivity (Intent.ACTION_CALL) for $code")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch TransparentActivity fallback", e)
+        }
     }
 
     /**
      * Process real response text from carrier (either from TelephonyManager or Accessibility Service).
      */
     private fun handleCarrierResponse(text: String, isTerminalOverride: Boolean) {
+        if (text.isBlank() || text.length < 3) {
+            Log.w("USSD_LOOP", "Skipping blank/short text: '$text'")
+            return
+        }
+        val trimmed = text.trim()
+        if (trimmed == "Waiting for carrier response..." || trimmed.startsWith("Waiting for")) {
+            Log.d(TAG, "Ignoring placeholder text in handleCarrierResponse: $text")
+            return
+        }
+
+        // Debounce duplicate carrier response matching last step prompt
+        if (currentStepLogs.isNotEmpty() && (currentStepLogs.last().promptText == text || (currentFlowSteps.isNotEmpty() && currentFlowSteps.last().rawPrompt == text))) {
+            Log.d("USSD_LOOP", "Ignoring duplicate carrier response matching last step prompt: $text")
+            return
+        }
+
         // Immediate cancellation of timeout on any incoming response
         timeoutManager.markResponseReceived()
 
@@ -304,12 +326,39 @@ object UssdSessionManager {
         sendButton: AccessibilityNodeInfo?,
         cancelButton: AccessibilityNodeInfo?
     ) {
+        if (text.isBlank() || text.length < 3) {
+            Log.w("USSD_LOOP", "Skipping blank/short text: '$text'")
+            return
+        }
+
+        if (!isSessionActive) {
+            Log.w("USSD_LOOP", "Dialog captured but no session active — ignoring")
+            return
+        }
+
+        val trimmed = text.trim()
+        if (trimmed == "Waiting for carrier response..." || trimmed.startsWith("Waiting for")) {
+            Log.d(TAG, "Ignoring placeholder text in onUssdDialogCaptured: $text")
+            return
+        }
+
+        capturedResponseCount++
+        if (capturedResponseCount > 10) {
+            Log.e("USSD_LOOP", "Hard stop: 10 captures reached")
+            onSessionEnd()
+            return
+        }
+
         timeoutManager.markResponseReceived()
         lastInputNode = if (inputNode != null) WeakReference(inputNode) else null
         lastSendButton = if (sendButton != null) WeakReference(sendButton) else null
         lastCancelButton = if (cancelButton != null) WeakReference(cancelButton) else null
 
-        handleCarrierResponse(text, isTerminalOverride = false)
+        if (isSessionActive) {
+            handleCarrierResponse(text, isTerminalOverride = false)
+        } else {
+            Log.w("USSD_LOOP", "Session ended before forwarding to handleCarrierResponse — dropping message")
+        }
     }
 
     /**
@@ -356,8 +405,12 @@ object UssdSessionManager {
         if (service != null && inputNode != null) {
             val success = service.submitTextToActiveDialog(inputNode, userInput, sendBtn)
             if (!success) {
-                Log.w(TAG, "Accessibility node submit failed on live dialog")
+                Log.w(TAG, "Accessibility node submit failed on live dialog, falling back to service.respondToUssd")
+                service.respondToUssd(userInput)
             }
+        } else if (service != null) {
+            Log.d(TAG, "No cached inputNode, sending via service.respondToUssd: $userInput")
+            service.respondToUssd(userInput)
         } else {
             Log.i(TAG, "Submitted step response: $userInput (waiting for live carrier response)")
         }
@@ -365,6 +418,7 @@ object UssdSessionManager {
 
     fun onSessionEnd() {
         isSessionRunning = false
+        capturedResponseCount = 0
         timeoutManager.cancelTimeout()
     }
 

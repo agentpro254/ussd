@@ -41,41 +41,7 @@ class CodeeOverlayService : Service() {
     }
 
     private fun showOverlay() {
-        if (!PermissionManager.isOverlayPermissionGranted(this)) return
-        if (overlayView != null) return
-
-        try {
-            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP
-                y = 50
-            }
-
-            val container = FrameLayout(this).apply {
-                setBackgroundColor(0xFF0F172A.toInt())
-                setPadding(32, 24, 32, 24)
-            }
-
-            overlayView = container
-            windowManager?.addView(overlayView, params)
-        } catch (_: Exception) {
-            // Ignore overlay errors gracefully
-        }
+        // Floating system overlay card disabled in favor of dedicated in-app session screen
     }
 
     private fun hideOverlay() {

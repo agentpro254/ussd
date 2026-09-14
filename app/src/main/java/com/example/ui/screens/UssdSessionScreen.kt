@@ -2,9 +2,11 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,15 +15,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SimCard
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -52,12 +60,17 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import android.util.Log
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import com.example.engine.SimpleUssdHandler
+import com.example.data.model.UssdSessionState
+import com.example.data.parser.UssdParser
+import com.example.engine.UssdSessionManager
+import com.example.service.CodeeAccessibilityService
 import com.example.ui.components.UssdResponseDisplay
+import com.example.ui.components.parseSimpleUssd
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.TealPrimary
 import com.example.ui.theme.TealPrimaryDark
@@ -75,47 +88,67 @@ fun UssdSessionScreen(
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    var responseText by remember { mutableStateOf("Connecting to carrier network for $code...") }
+    var responseText by remember { mutableStateOf("Waiting for carrier response...") }
     var isWaiting by remember { mutableStateOf(true) }
     var userInput by remember { mutableStateOf("") }
     var isComplete by remember { mutableStateOf(false) }
 
-    val handler = remember { SimpleUssdHandler() }
-
-    // Clean up active session on exit
+    // Clean up active session on exit and listen for accessibility updates
     DisposableEffect(Unit) {
+        CodeeAccessibilityService.setUssdCallback { newResponse ->
+            if (newResponse.isNotBlank() && !newResponse.startsWith("Waiting for") && newResponse != "Sending...") {
+                responseText = newResponse
+                isWaiting = false
+                isComplete = false
+            }
+        }
         onDispose {
-            handler.cancelSession()
+            CodeeAccessibilityService.setUssdCallback(null)
+            UssdSessionManager.dismissSession(context)
         }
     }
 
-    // Immediately launch real USSD request upon screen mount
+    // Initiate USSD session and collect real sessionState
     LaunchedEffect(code, subscriptionId) {
+        Log.d("DIAL_DEBUG", "UssdSessionScreen LaunchedEffect firing for code=$code, subId=$subscriptionId")
         isWaiting = true
+        isComplete = false
         responseText = "Waiting for carrier response..."
 
-        // Launch 30-second fallback timer
-        val timerJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-            kotlinx.coroutines.delay(30000L)
-            if (isWaiting) {
-                isWaiting = false
-                isComplete = true
-                responseText = "Session timed out waiting for carrier response. Please verify mobile reception or try dialing again."
-            }
-        }
-
-        handler.dialCode(
+        UssdSessionManager.startUssdSession(
             context = context,
-            code = code,
-            subscriptionId = subscriptionId,
-            slotIndex = simSlotIndex
-        ) { response, isFinal ->
-            timerJob.cancel()
-            responseText = response
-            isWaiting = (response == "Waiting for carrier response...")
-            if (isFinal) {
-                isComplete = true
-                onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, response)
+            rawCode = code,
+            simSlot = simSlotIndex,
+            userInitiated = true,
+            skipTransparentActivityLaunch = true
+        )
+
+        UssdSessionManager.sessionState.collect { state ->
+            when (state) {
+                is UssdSessionState.ActiveSession -> {
+                    val prompt = state.response.rawText.ifBlank {
+                        if (state.response.body.isNotBlank()) state.response.body else state.response.title
+                    }
+                    if (prompt.isNotBlank() && prompt != "Waiting for carrier response..." && !prompt.startsWith("Waiting for")) {
+                        responseText = prompt
+                        isWaiting = false
+                        isComplete = false
+                    }
+                }
+                is UssdSessionState.Completed -> {
+                    val finalSummary = state.response.rawText.ifBlank {
+                        state.summary.ifBlank { state.response.body }
+                    }
+                    if (finalSummary.isNotBlank() && finalSummary != "Waiting for carrier response..." && !finalSummary.startsWith("Waiting for")) {
+                        responseText = finalSummary
+                        isWaiting = false
+                        isComplete = true
+                        onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, finalSummary)
+                    }
+                }
+                else -> {
+                    // Strictly ignore other states - UI only updates on ActiveSession or Completed
+                }
             }
         }
     }
@@ -206,7 +239,7 @@ fun UssdSessionScreen(
 
             IconButton(
                 onClick = {
-                    handler.cancelSession()
+                    UssdSessionManager.dismissSession(context)
                     onClose()
                 },
                 modifier = Modifier.testTag("close_ussd_session_button")
@@ -220,6 +253,22 @@ fun UssdSessionScreen(
         }
 
         Spacer(modifier = Modifier.height(14.dp))
+
+        val menuOptions = remember(responseText) {
+            if (responseText.isNotBlank() && !responseText.startsWith("Waiting for") && responseText != "Sending...") {
+                UssdParser.parseToMenuOptions(responseText)
+            } else {
+                emptyList()
+            }
+        }
+        val headerText = remember(responseText, menuOptions) {
+            if (menuOptions.isNotEmpty()) {
+                val lines = responseText.lines().map { it.trim() }.filter { it.isNotBlank() }
+                lines.firstOrNull { line ->
+                    !menuOptions.any { opt -> line.startsWith(opt.number) }
+                }
+            } else null
+        }
 
         // Main Response View Area
         Card(
@@ -264,20 +313,80 @@ fun UssdSessionScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                } else if (menuOptions.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("ussd_menu_options_list"),
+                        contentPadding = PaddingValues(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (headerText != null) {
+                            item {
+                                Text(
+                                    text = headerText,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                        items(menuOptions, key = { it.number + it.label }) { option ->
+                            Card(
+                                shape = RoundedCornerShape(14.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        isWaiting = true
+                                        responseText = "Sending..."
+                                        CodeeAccessibilityService.sendUssdResponse(option.number)
+                                        UssdSessionManager.submitStepResponse(option.number)
+                                    }
+                                    .testTag("ussd_option_${option.number}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Bold number on the left (e.g., 98, 0, 1)
+                                    Text(
+                                        text = option.number,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TealPrimary,
+                                        modifier = Modifier.widthIn(min = 28.dp)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+
+                                    // Label on the right (e.g., CashBack, Bizna Wallet, Bundle Offers)
+                                    Text(
+                                        text = option.label,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } else {
                     UssdResponseDisplay(
                         response = responseText,
                         isComplete = isComplete,
                         onSendInput = { input ->
                             isWaiting = true
-                            handler.sendInput(context, input) { nextResponse, isFinal ->
-                                responseText = nextResponse
-                                isWaiting = (nextResponse == "Waiting for carrier response...")
-                                if (isFinal) {
-                                    isComplete = true
-                                    onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)
-                                }
-                            }
+                            responseText = "Sending..."
+                            CodeeAccessibilityService.sendUssdResponse(input)
+                            UssdSessionManager.submitStepResponse(input)
                         }
                     )
                 }
@@ -286,8 +395,20 @@ fun UssdSessionScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Input Field & Action Bar (when session is active, waiting for input, and not complete)
-        if (!isWaiting && !isComplete) {
+        // Input Field & Action Bar: Keep a small text input below the list for PIN entry and custom responses
+        val parsed = remember(responseText) {
+            if (responseText == "Waiting for carrier response..." || responseText.isBlank() || responseText.startsWith("Waiting for")) {
+                null
+            } else {
+                parseSimpleUssd(responseText)
+            }
+        }
+        val isPinInput = parsed?.isPinPrompt == true || responseText.lowercase().contains("pin") || responseText.lowercase().contains("password")
+        val shouldShowInputField = !isWaiting && !isComplete
+
+        if (shouldShowInputField) {
+            var pinVisible by remember(responseText) { mutableStateOf(false) }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -296,12 +417,38 @@ fun UssdSessionScreen(
                 OutlinedTextField(
                     value = userInput,
                     onValueChange = { userInput = it },
-                    placeholder = { Text("Type reply (e.g. 1, 2, PIN)...") },
+                    label = { Text(if (isPinInput) "PIN" else "Reply / PIN") },
+                    placeholder = { 
+                        Text(if (isPinInput) "Enter PIN..." else "Enter PIN or custom response...") 
+                    },
                     singleLine = true,
+                    visualTransformation = if (isPinInput && !pinVisible) PasswordVisualTransformation() else VisualTransformation.None,
                     keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
+                        keyboardType = if (isPinInput) KeyboardType.NumberPassword else KeyboardType.Text,
                         imeAction = ImeAction.Send
                     ),
+                    leadingIcon = if (isPinInput) {
+                        {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Security PIN",
+                                tint = TealPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    } else null,
+                    trailingIcon = if (isPinInput && userInput.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { pinVisible = !pinVisible }) {
+                                Icon(
+                                    imageVector = if (pinVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (pinVisible) "Hide PIN" else "Show PIN",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else null,
                     keyboardActions = KeyboardActions(
                         onSend = {
                             if (userInput.isNotBlank()) {
@@ -309,25 +456,20 @@ fun UssdSessionScreen(
                                 val toSend = userInput.trim()
                                 userInput = ""
                                 isWaiting = true
-                                handler.sendInput(context, toSend) { nextResponse, isFinal ->
-                                    responseText = nextResponse
-                                    isWaiting = (nextResponse == "Waiting for carrier response...")
-                                    if (isFinal) {
-                                        isComplete = true
-                                        onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)
-                                    }
-                                }
+                                responseText = "Sending..."
+                                CodeeAccessibilityService.sendUssdResponse(toSend)
+                                UssdSessionManager.submitStepResponse(toSend)
                             }
                         }
                     ),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = TealPrimary,
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                     ),
                     modifier = Modifier
                         .weight(1f)
-                        .testTag("ussd_session_input_field")
+                        .testTag("ussd_reply_input_field")
                 )
 
                 Button(
@@ -337,18 +479,13 @@ fun UssdSessionScreen(
                             val toSend = userInput.trim()
                             userInput = ""
                             isWaiting = true
-                            handler.sendInput(context, toSend) { nextResponse, isFinal ->
-                                responseText = nextResponse
-                                isWaiting = (nextResponse == "Waiting for carrier response...")
-                                if (isFinal) {
-                                    isComplete = true
-                                    onSessionFinished?.invoke(code, if (title.isNotBlank()) title else code, nextResponse)
-                                }
-                            }
+                            responseText = "Sending..."
+                            CodeeAccessibilityService.sendUssdResponse(toSend)
+                            UssdSessionManager.submitStepResponse(toSend)
                         }
                     },
                     enabled = userInput.isNotBlank(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TealPrimary),
                     modifier = Modifier
                         .height(56.dp)

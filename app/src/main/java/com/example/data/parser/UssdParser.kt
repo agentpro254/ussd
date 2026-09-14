@@ -1,5 +1,6 @@
 package com.example.data.parser
 
+import android.util.Log
 import com.example.data.model.ParsedUssdResponse
 import com.example.data.model.UssdInputType
 import com.example.data.model.UssdMenuOption
@@ -8,8 +9,10 @@ import java.util.regex.Pattern
 
 object UssdParser {
 
+    private const val TAG = "PARSE_DEBUG"
+
     private val MENU_REGEX = Pattern.compile(
-        """(?m)^[\s*#]*(\d+|\*|#|00)\s*[\.\)\:\>\-]\s*(.+)$"""
+        """(?m)^\s*(\d+)\s*[\.\)\-\:]\s*(.+)$"""
     )
 
     private val BALANCE_REGEX = Regex(
@@ -74,6 +77,18 @@ object UssdParser {
 
     fun parse(rawText: String, stepIndex: Int = 1): ParsedUssdResponse {
         val trimmed = rawText.trim()
+        if (trimmed == "Waiting for carrier response..." || trimmed.isBlank() || trimmed.startsWith("Waiting for")) {
+            return ParsedUssdResponse(
+                type = UssdResponseType.MENU,
+                title = "",
+                body = "",
+                rawText = rawText,
+                stepIndex = stepIndex,
+                isTerminal = false,
+                isSuccess = true
+            )
+        }
+        Log.d(TAG, "Parsed text: $rawText")
         if (trimmed.isEmpty()) {
             return ParsedUssdResponse(
                 type = UssdResponseType.INFO,
@@ -215,6 +230,7 @@ object UssdParser {
         // Case C: Menu Options (Numbered / Bulleted Choices)
         val menuOptions = extractMenuOptions(clean)
         if (menuOptions.isNotEmpty() && !isConfirmationPrompt(lower)) {
+            Log.d(TAG, "Parsed options: " + menuOptions.size)
             val (title, body) = extractHeaderAndBody(clean, menuOptions)
             return ParsedUssdResponse(
                 type = UssdResponseType.MENU,
@@ -325,7 +341,30 @@ object UssdParser {
                 )
             }
         }
+        Log.d("PARSE_DEBUG", "Parsed options: " + options.size)
         return options
+    }
+
+    fun parseToMenuOptions(text: String): List<com.example.data.model.MenuOption> {
+        val options = mutableListOf<com.example.data.model.MenuOption>()
+        val lines = text.lines()
+        for (line in lines) {
+            val trimmedLine = line.trim()
+            val matcher = MENU_REGEX.matcher(trimmedLine)
+            if (matcher.find()) {
+                val key = matcher.group(1)?.trim() ?: ""
+                val label = matcher.group(2)?.trim() ?: ""
+                if (key.isNotBlank() && label.isNotBlank()) {
+                    options.add(com.example.data.model.MenuOption(number = key, label = label))
+                }
+            }
+        }
+        Log.d("PARSE_DEBUG", "Parsed options: " + options.size)
+        return options
+    }
+
+    fun parseMenuOptions(text: String): List<com.example.data.model.MenuOption> {
+        return parseToMenuOptions(text)
     }
 
     private fun extractHeaderAndBody(text: String, options: List<UssdMenuOption>): Pair<String, String> {

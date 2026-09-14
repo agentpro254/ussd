@@ -450,7 +450,7 @@ fun SmsMessageCard(
     onCopy: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isSent = parsedSms.type == SmsType.MPESA_SENT || parsedSms.type == SmsType.MPESA_BILL_PAYMENT || parsedSms.type == SmsType.MPESA_WITHDRAWAL
+    val isSent = parsedSms.type == SmsType.MPESA_SENT || parsedSms.type == SmsType.MPESA_PAID || parsedSms.type == SmsType.MPESA_BILL_PAYMENT || parsedSms.type == SmsType.MPESA_WITHDRAWAL
     val isReceived = parsedSms.type == SmsType.MPESA_RECEIVED
 
     Card(
@@ -486,6 +486,7 @@ fun SmsMessageCard(
                     val icon = when (parsedSms.type) {
                         SmsType.MPESA_SENT -> "📤"
                         SmsType.MPESA_RECEIVED -> "📥"
+                        SmsType.MPESA_PAID -> "💳"
                         SmsType.MPESA_AIRTIME -> "📱"
                         SmsType.MPESA_BILL_PAYMENT -> "🏢"
                         SmsType.MPESA_WITHDRAWAL -> "🏧"
@@ -499,6 +500,7 @@ fun SmsMessageCard(
                         text = when (parsedSms.type) {
                             SmsType.MPESA_SENT -> "Money Sent"
                             SmsType.MPESA_RECEIVED -> "Money Received"
+                            SmsType.MPESA_PAID -> "Money Paid"
                             SmsType.MPESA_AIRTIME -> "Airtime Purchase"
                             SmsType.MPESA_BILL_PAYMENT -> "Bill / Paybill Payment"
                             SmsType.MPESA_WITHDRAWAL -> "Cash Withdrawal"
@@ -669,7 +671,7 @@ fun TransactionDetailModal(
     onDismiss: () -> Unit,
     onCopy: (String) -> Unit
 ) {
-    val isSent = parsedSms.type == SmsType.MPESA_SENT || parsedSms.type == SmsType.MPESA_BILL_PAYMENT || parsedSms.type == SmsType.MPESA_WITHDRAWAL
+    val isSent = parsedSms.type == SmsType.MPESA_SENT || parsedSms.type == SmsType.MPESA_PAID || parsedSms.type == SmsType.MPESA_BILL_PAYMENT || parsedSms.type == SmsType.MPESA_WITHDRAWAL
     val isReceived = parsedSms.type == SmsType.MPESA_RECEIVED
 
     Dialog(
@@ -733,6 +735,7 @@ fun TransactionDetailModal(
                     val icon = when (parsedSms.type) {
                         SmsType.MPESA_SENT -> "📤"
                         SmsType.MPESA_RECEIVED -> "📥"
+                        SmsType.MPESA_PAID -> "💳"
                         SmsType.MPESA_AIRTIME -> "📱"
                         SmsType.MPESA_BILL_PAYMENT -> "🏢"
                         SmsType.MPESA_WITHDRAWAL -> "🏧"
@@ -761,6 +764,7 @@ fun TransactionDetailModal(
                         text = when (parsedSms.type) {
                             SmsType.MPESA_SENT -> "Money Sent"
                             SmsType.MPESA_RECEIVED -> "Money Received"
+                            SmsType.MPESA_PAID -> "Money Paid"
                             SmsType.MPESA_AIRTIME -> "Airtime Purchase"
                             SmsType.MPESA_BILL_PAYMENT -> "Bill Payment"
                             SmsType.MPESA_WITHDRAWAL -> "Cash Withdrawal"

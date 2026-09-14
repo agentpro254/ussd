@@ -22,12 +22,14 @@ data class ParsedSms(
     val balance: String? = null,
     val fee: String? = null,
     val dateTime: String? = null,
-    val isConfirmed: Boolean = false
+    val isConfirmed: Boolean = false,
+    val rawText: String? = null
 )
 
 enum class SmsType {
     MPESA_SENT,
     MPESA_RECEIVED,
+    MPESA_PAID,
     MPESA_AIRTIME,
     MPESA_BILL_PAYMENT,
     MPESA_WITHDRAWAL,

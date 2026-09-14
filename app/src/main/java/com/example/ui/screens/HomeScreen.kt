@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -106,18 +107,25 @@ fun HomeScreen(
         val clean = code.trim()
         if (clean.isBlank()) return
 
-        val isCallGranted = PermissionManager.isCallPhoneGranted(context)
-        val isAccessGranted = AccessibilityHelper.isAccessibilityServiceEnabled(context)
+        val activeSims = PermissionManager.getAvailableSimCards(context)
+        if (activeSims.size > 1) {
+            // If there are TWO SIMs, show the SimSelectionDialog and let the user choose.
+            pendingDialCode = clean
+            pendingDialTitle = if (title.isNotBlank()) title else clean
+            showSimSelectDialog = true
+        } else {
+            // If there is ONLY ONE SIM, use it as default and dial immediately (no dialog).
+            val selectedSim = activeSims.firstOrNull()
+            val subId = selectedSim?.subscriptionId ?: -1
+            val slotIndex = selectedSim?.slotIndex ?: 0
 
-        if (!isCallGranted || !isAccessGranted) {
-            // Fail-Safe Pre-Dial Gate: Show permission popup dialog
-            showPermissionGateDialog = true
-            return
+            onDialCode(
+                clean,
+                if (title.isNotBlank()) title else clean,
+                subId,
+                slotIndex
+            )
         }
-
-        pendingDialCode = clean
-        pendingDialTitle = if (title.isNotBlank()) title else clean
-        showSimSelectDialog = true
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -390,12 +398,7 @@ fun HomeScreen(
                                     onClick = { dialpadCode = "" },
                                     modifier = Modifier.size(40.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Clear,
-                                        contentDescription = "Clear",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    Text("✕", fontSize = 20.sp, color = Color.Gray)
                                 }
                                 IconButton(
                                     onClick = {
@@ -484,8 +487,15 @@ fun HomeScreen(
                     // Large Prominent Call/Dial USSD Button
                     Button(
                         onClick = {
-                            if (dialpadCode.isNotBlank()) {
-                                initiateDial(dialpadCode.trim(), "Manual Dial")
+                            val dialCode = dialpadCode.trim()
+                            if (dialCode.isNotBlank()) {
+                                val activeSims = PermissionManager.getAvailableSimCards(context)
+                                val selectedSim = activeSims.firstOrNull()
+                                val selectedSubId = selectedSim?.subscriptionId ?: -1
+                                val selectedSlot = selectedSim?.slotIndex ?: 0
+                                val title = "Manual Dial"
+                                Log.d("DIAL_DEBUG", "Dial button clicked. code=$dialCode, subId=$selectedSubId, slot=$selectedSlot")
+                                onDialCode(dialCode, title, selectedSubId, selectedSlot)
                             }
                         },
                         enabled = dialpadCode.isNotBlank(),
@@ -523,12 +533,13 @@ fun HomeScreen(
 
         // Direct SIM slot selection dialog
         if (showSimSelectDialog) {
+            val activeSims = PermissionManager.getAvailableSimCards(context)
             SimSelectionDialog(
                 codeToDial = pendingDialCode,
-                simCards = availableSims,
+                simCards = activeSims,
                 onSelectSim = { simSlot ->
                     showSimSelectDialog = false
-                    val selectedSim = availableSims.find { it.slotIndex == simSlot } ?: availableSims.firstOrNull()
+                    val selectedSim = activeSims.find { it.slotIndex == simSlot } ?: activeSims.firstOrNull()
                     val subId = selectedSim?.subscriptionId ?: -1
                     onDialCode(
                         pendingDialCode,
