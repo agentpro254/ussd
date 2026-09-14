@@ -33,11 +33,15 @@ class TransparentActivity : Activity() {
             intent.getParcelableExtra<Intent>("call_intent")
         }
 
+        var launchedCall = false
+        val codeForLog = code ?: "code"
+
         if (passedCallIntent != null) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
                 try {
                     startActivity(passedCallIntent)
-                    Log.d(TAG, "🚀 Launched passed call_intent via TransparentActivity")
+                    launchedCall = true
+                    Log.d("DIAL_DEBUG", "TransparentActivity launched ACTION_CALL for $codeForLog")
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error launching passed call_intent", e)
                 }
@@ -57,7 +61,8 @@ class TransparentActivity : Activity() {
                         }
                     }
                     startActivity(callIntent)
-                    Log.d(TAG, "🚀 Launched ACTION_CALL via TransparentActivity for $code")
+                    launchedCall = true
+                    Log.d("DIAL_DEBUG", "TransparentActivity launched ACTION_CALL for $code")
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error launching ACTION_CALL", e)
                 }
@@ -66,17 +71,21 @@ class TransparentActivity : Activity() {
             }
         }
 
-        // [BRING MY APP TO FRONT]: Immediately reorder MainActivity back to front to cover system dialer popup
-        try {
-            val bringAppIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            startActivity(bringAppIntent)
-            Log.d(TAG, "📲 Reordered MainActivity to front immediately")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to bring MainActivity to front", e)
+        if (launchedCall) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    val bringIntent = Intent(this, com.example.MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(bringIntent)
+                    Log.d("DIAL_DEBUG", "TransparentActivity brought app to front after 1500ms")
+                } catch (e: Exception) {
+                    Log.w("DIAL_DEBUG", "bringAppToFront failed: ${e.message}")
+                }
+                finish()
+            }, 1500L)
+        } else {
+            finish()
         }
-
-        finish()
     }
 }

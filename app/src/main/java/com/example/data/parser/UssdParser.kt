@@ -12,7 +12,7 @@ object UssdParser {
     private const val TAG = "PARSE_DEBUG"
 
     private val MENU_REGEX = Pattern.compile(
-        """(?m)^\s*(\d+)\s*[\.\)\-\:]\s*(.+)$"""
+        """(?m)^\s*(\d+|[*#])\s*[\.\)\-\:\s]\s*(.+)$"""
     )
 
     private val BALANCE_REGEX = Regex(

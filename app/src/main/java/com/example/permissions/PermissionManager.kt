@@ -19,22 +19,30 @@ import com.example.service.CodeeAccessibilityService
 object PermissionManager {
 
     fun isAccessibilityEnabled(context: Context): Boolean {
-        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
-        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-        val targetServiceId = "${context.packageName}/${CodeeAccessibilityService::class.java.canonicalName}"
-        val shortTargetServiceId = "${context.packageName}/${CodeeAccessibilityService::class.java.name}"
-        return enabledServices.any { 
-            it.id.equals(targetServiceId, ignoreCase = true) ||
-            it.id.equals(shortTargetServiceId, ignoreCase = true) ||
-            it.id.contains(CodeeAccessibilityService::class.java.simpleName)
+        return try {
+            val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager ?: return false
+            val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK) ?: return false
+            val targetServiceId = "${context.packageName}/${CodeeAccessibilityService::class.java.canonicalName}"
+            val shortTargetServiceId = "${context.packageName}/${CodeeAccessibilityService::class.java.name}"
+            enabledServices.any { 
+                it.id.equals(targetServiceId, ignoreCase = true) ||
+                it.id.equals(shortTargetServiceId, ignoreCase = true) ||
+                it.id.contains(CodeeAccessibilityService::class.java.simpleName)
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
     fun isOverlayPermissionGranted(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(context)
-        } else {
-            true
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Settings.canDrawOverlays(context)
+            } else {
+                true
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 

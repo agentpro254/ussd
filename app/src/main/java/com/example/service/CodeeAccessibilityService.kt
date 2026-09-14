@@ -137,103 +137,117 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        instance = this
-        UssdSessionManager.setAccessibilityServiceInstance(this)
+        try {
+            instance = this
+            UssdSessionManager.setAccessibilityServiceInstance(this)
 
-        val info = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOWS_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED or
-                    AccessibilityEvent.TYPE_VIEW_FOCUSED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED or
-                    AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+            val info = AccessibilityServiceInfo().apply {
+                eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                        AccessibilityEvent.TYPE_WINDOWS_CHANGED or
+                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                        AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                        AccessibilityEvent.TYPE_VIEW_CLICKED or
+                        AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                        AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                        AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
 
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            packageNames = null
+                feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+                packageNames = null
 
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                    AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
+                flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                        AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                        AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
 
-            notificationTimeout = 50
+                notificationTimeout = 50
+            }
+            serviceInfo = info
+
+            Log.d("ACCESS_DEBUG", "SERVICE CONNECTED")
+            Log.d("ACCESS_DEBUG", "packageNames=${serviceInfo?.packageNames?.joinToString()}")
+            Log.d("ACCESS_DEBUG", "eventTypes=${serviceInfo?.eventTypes}")
+            Log.d("ACCESS_DEBUG", "flags=${serviceInfo?.flags}")
+            val canRetrieve = (serviceInfo?.capabilities ?: 0) and AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0
+            Log.d("ACCESS_DEBUG", "canRetrieveWindowContent=$canRetrieve")
+            Log.d("ACCESS_DEBUG", "FINAL eventTypes=${serviceInfo?.eventTypes}")
+            Log.d("ACCESS_DEBUG", "FINAL flags=${serviceInfo?.flags}")
+            Log.d("ACCESS_DEBUG", "FINAL capabilities=${serviceInfo?.capabilities}")
+            Log.d(TAG, "✅ Universal Codee Accessibility Service connected with FLAG_RETRIEVE_INTERACTIVE_WINDOWS")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error in onServiceConnected", t)
         }
-        serviceInfo = info
-
-        Log.d("ACCESS_DEBUG", "SERVICE CONNECTED")
-        Log.d("ACCESS_DEBUG", "packageNames=${serviceInfo?.packageNames?.joinToString()}")
-        Log.d("ACCESS_DEBUG", "eventTypes=${serviceInfo?.eventTypes}")
-        Log.d("ACCESS_DEBUG", "flags=${serviceInfo?.flags}")
-        val canRetrieve = (serviceInfo?.capabilities ?: 0) and AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0
-        Log.d("ACCESS_DEBUG", "canRetrieveWindowContent=$canRetrieve")
-        Log.d("ACCESS_DEBUG", "FINAL eventTypes=${serviceInfo.eventTypes}")
-        Log.d("ACCESS_DEBUG", "FINAL flags=${serviceInfo.flags}")
-        Log.d("ACCESS_DEBUG", "FINAL capabilities=${serviceInfo.capabilities}")
-        Log.d(TAG, "✅ Universal Codee Accessibility Service connected with FLAG_RETRIEVE_INTERACTIVE_WINDOWS")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType}")
+        try {
+            Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType}")
 
-        val eventPkg = event.packageName?.toString() ?: ""
-        if (eventPkg == "com.android.settings" ||
-            eventPkg == "com.android.systemui" ||
-            eventPkg.startsWith("com.google.android.apps.nexuslauncher") ||
-            eventPkg.startsWith("com.aistudio") ||
-            eventPkg.startsWith("com.example") ||
-            eventPkg.contains("codee", ignoreCase = true)) {
-            return
-        }
+            val eventPkg = event.packageName?.toString() ?: ""
+            if (eventPkg == "com.android.settings" ||
+                eventPkg == "com.android.systemui" ||
+                eventPkg.startsWith("com.google.android.apps.nexuslauncher") ||
+                eventPkg.startsWith("com.aistudio") ||
+                eventPkg.startsWith("com.example") ||
+                eventPkg.contains("codee", ignoreCase = true)) {
+                return
+            }
 
-        // STEP 1: READ the dialog WHILE IT IS VISIBLE. Do not hide it yet.
-        val directSource = event.source
-        var capturedText: String? = null
-        var capturedNode: AccessibilityNodeInfo? = null
+            // STEP 1: READ the dialog WHILE IT IS VISIBLE. Do not hide it yet.
+            val directSource = event.source
+            var capturedText: String? = null
+            var capturedNode: AccessibilityNodeInfo? = null
 
-        if (directSource != null) {
-            val srcPkg = directSource.packageName?.toString() ?: ""
-            if (srcPkg != "com.android.settings" &&
-                srcPkg != "com.android.systemui" &&
-                !srcPkg.startsWith("com.google.android.apps.nexuslauncher") &&
-                !srcPkg.startsWith("com.aistudio") &&
-                !srcPkg.startsWith("com.example") &&
-                !srcPkg.contains("codee", ignoreCase = true)) {
-                val directText = extractUssdText(directSource)
-                if (directText != null && directText.length > 3 && looksLikeUssd(directText)) {
-                    capturedText = directText
-                    capturedNode = directSource
-                    Log.d("ACCESS_DEBUG", "DIRECT SOURCE CAPTURED pkg=$srcPkg text=$directText")
+            if (directSource != null) {
+                val srcPkg = directSource.packageName?.toString() ?: ""
+                if (srcPkg != "com.android.settings" &&
+                    srcPkg != "com.android.systemui" &&
+                    !srcPkg.startsWith("com.google.android.apps.nexuslauncher") &&
+                    !srcPkg.startsWith("com.aistudio") &&
+                    !srcPkg.startsWith("com.example") &&
+                    !srcPkg.contains("codee", ignoreCase = true)) {
+                    val directText = extractUssdText(directSource)
+                    if (directText != null && directText.length > 3 && looksLikeUssd(directText)) {
+                        capturedText = directText
+                        capturedNode = directSource
+                        Log.d("ACCESS_DEBUG", "DIRECT SOURCE CAPTURED pkg=$srcPkg text=$directText")
+                    }
                 }
             }
-        }
 
-        if (capturedText == null) {
-            val dialog = findUssdDialogInWindows(event.source)
-            if (dialog != null) {
-                capturedText = dialog.first
-                capturedNode = dialog.second
-                Log.d("ACCESS_DEBUG", "WINDOW CAPTURED pkg=${capturedNode.packageName} text=$capturedText")
+            if (capturedText == null) {
+                val dialog = findUssdDialogInWindows(event.source)
+                if (dialog != null) {
+                    capturedText = dialog.first
+                    capturedNode = dialog.second
+                    Log.d("ACCESS_DEBUG", "WINDOW CAPTURED pkg=${capturedNode.packageName} text=$capturedText")
+                }
             }
-        }
 
-        // STEP 2: Now that we have the text, notify the session manager.
-        if (capturedText != null && capturedNode != null) {
-            processUssdResponse(capturedText, capturedNode)
+            // STEP 2: Now that we have the text, notify the session manager.
+            if (capturedText != null && capturedNode != null) {
+                processUssdResponse(capturedText, capturedNode)
+            }
+        } catch (t: Throwable) {
+            Log.e("ACCESS_DEBUG", "Safe handled error in onAccessibilityEvent", t)
         }
     }
 
+    private fun countNumberedMenuLines(text: String): Int {
+        val regex = Regex("""(?m)^\s*\d{1,3}\s*[\.\)\-\:]\s*\S+""")
+        return regex.findAll(text).count()
+    }
+
     private fun looksLikeUssd(text: String): Boolean {
-        val hasNumberedMenu = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+\S+""").containsMatchIn(text)
-        val hasUssdKeywords = hasUssdKeywords(text)
-        // Reject anything too short, or that contains obvious non-USSD content
-        val hasNonUssdContent = text.contains("Accessibility") ||
+        val menuLineCount = countNumberedMenuLines(text)
+        val hasMenu = menuLineCount >= 3           // require at least 3 consecutive options
+        val hasKeywords = hasUssdKeywords(text)
+        val hasNonUssd = text.contains("Accessibility") ||
                 text.contains("TalkBack") ||
                 text.contains("Settings") ||
                 text.contains("Magnification") ||
-                text.contains("Display size")
-        return (hasNumberedMenu || hasUssdKeywords) && !hasNonUssdContent
+                text.contains("Display size") ||
+                text.contains("Shortcut settings") ||
+                text.contains("App info")
+        return (hasMenu || hasKeywords) && !hasNonUssd
     }
 
     /**
@@ -267,9 +281,6 @@ class CodeeAccessibilityService : AccessibilityService() {
             rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
             eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
 
-            val numberedMenuRegex = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+\S+""")
-            val anyDigitAtLineStartRegex = Regex("""(?m)^\s*\d+""")
-
             for (windowRoot in candidateRoots) {
                 Log.d("ACCESS_DEBUG", "Window pkg=${windowRoot.packageName} class=${windowRoot.className} childCount=${windowRoot.childCount}")
                 val windowPkg = windowRoot.packageName?.toString() ?: ""
@@ -290,23 +301,22 @@ class CodeeAccessibilityService : AccessibilityService() {
                 if (text.isBlank() || text.length < 3) continue
 
                 // Check acceptance criteria
-                val hasNumberedMenu = numberedMenuRegex.containsMatchIn(text)
+                val menuLineCount = countNumberedMenuLines(text)
+                val hasMenu = menuLineCount >= 3
                 val hasKeywords = hasUssdKeywords(text)
-                val hasNonUssdContent = text.contains("Accessibility") ||
+                val hasNonUssd = text.contains("Accessibility") ||
                         text.contains("TalkBack") ||
                         text.contains("Settings") ||
                         text.contains("Magnification") ||
-                        text.contains("Display size")
+                        text.contains("Display size") ||
+                        text.contains("Shortcut settings") ||
+                        text.contains("App info")
 
-                val isDialogWithDigits = (windowClass.contains("Dialog", ignoreCase = true) ||
-                        windowClass.contains("AlertDialog", ignoreCase = true)) &&
-                        anyDigitAtLineStartRegex.containsMatchIn(text)
-
-                if (hasNumberedMenu) {
-                    Log.d("ACCESS_DEBUG", "Numbered menu detected, accepting as USSD dialog")
+                if (hasMenu) {
+                    Log.d("ACCESS_DEBUG", "Numbered menu detected ($menuLineCount lines), accepting as USSD dialog")
                 }
 
-                if ((hasNumberedMenu || hasKeywords || isDialogWithDigits) && !hasNonUssdContent) {
+                if ((hasMenu || hasKeywords) && !hasNonUssd) {
                     Log.d("ACCESS_DEBUG", "MATCH (universal) pkg=${windowRoot.packageName} class=${windowRoot.className} text=$text")
                     return Pair(text, windowRoot)
                 }
@@ -391,15 +401,20 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     private fun extractTextFromNode(node: AccessibilityNodeInfo, builder: StringBuilder) {
-        val nodeText = node.text?.toString()
-        if (!nodeText.isNullOrEmpty()) builder.append(nodeText).append("\n")
+        try {
+            val nodeText = node.text?.toString()
+            if (!nodeText.isNullOrEmpty()) builder.append(nodeText).append("\n")
 
-        val contentDesc = node.contentDescription?.toString()
-        if (!contentDesc.isNullOrEmpty()) builder.append(contentDesc).append("\n")
+            val contentDesc = node.contentDescription?.toString()
+            if (!contentDesc.isNullOrEmpty()) builder.append(contentDesc).append("\n")
 
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            extractTextFromNode(child, builder)
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i) ?: continue
+                extractTextFromNode(child, builder)
+            }
+        } catch (_: Exception) {
+            // Node might have been recycled by system
         }
     }
 
@@ -581,93 +596,108 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     private fun findInputField(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val className = node.className?.toString() ?: ""
-        if (node.isEditable || className.contains("EditText", ignoreCase = true)) {
-            return node
-        }
-
-        val viewId = node.viewIdResourceName?.lowercase() ?: ""
-        if ((viewId.contains("input") || viewId.contains("edit")) && !className.contains("TextView", ignoreCase = true)) {
-            return node
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                val result = findInputField(child)
-                if (result != null) return result
+        return try {
+            val className = node.className?.toString() ?: ""
+            if (node.isEditable || className.contains("EditText", ignoreCase = true)) {
+                return node
             }
-        }
 
-        return null
+            val viewId = node.viewIdResourceName?.lowercase() ?: ""
+            if ((viewId.contains("input") || viewId.contains("edit")) && !className.contains("TextView", ignoreCase = true)) {
+                return node
+            }
+
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val result = findInputField(child)
+                    if (result != null) return result
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun findSendButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val text = node.text?.toString()?.lowercase() ?: ""
-        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
-        val combined = "$text $contentDesc"
+        return try {
+            val text = node.text?.toString()?.lowercase() ?: ""
+            val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+            val combined = "$text $contentDesc"
 
-        if (combined.contains("send") ||
-            combined.contains("ok") ||
-            combined.contains("confirm") ||
-            combined.contains("submit") ||
-            combined.contains("proceed") ||
-            combined.contains("reply") ||
-            combined.contains("yes")
-        ) {
-            return node
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                val result = findSendButton(child)
-                if (result != null) return result
+            if (combined.contains("send") ||
+                combined.contains("ok") ||
+                combined.contains("confirm") ||
+                combined.contains("submit") ||
+                combined.contains("proceed") ||
+                combined.contains("reply") ||
+                combined.contains("yes")
+            ) {
+                return node
             }
-        }
 
-        return null
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val result = findSendButton(child)
+                    if (result != null) return result
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun findCancelButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val text = node.text?.toString()?.lowercase() ?: ""
-        val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
-        val combined = "$text $contentDesc"
+        return try {
+            val text = node.text?.toString()?.lowercase() ?: ""
+            val contentDesc = node.contentDescription?.toString()?.lowercase() ?: ""
+            val combined = "$text $contentDesc"
 
-        if (combined.contains("cancel") ||
-            combined.contains("dismiss") ||
-            combined.contains("close") ||
-            combined.contains("back")
-        ) {
-            return node
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                val result = findCancelButton(child)
-                if (result != null) return result
+            if (combined.contains("cancel") ||
+                combined.contains("dismiss") ||
+                combined.contains("close") ||
+                combined.contains("back")
+            ) {
+                return node
             }
-        }
 
-        return null
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    val result = findCancelButton(child)
+                    if (result != null) return result
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun findButtonsByText(node: AccessibilityNodeInfo, text: String): List<AccessibilityNodeInfo> {
         val result = mutableListOf<AccessibilityNodeInfo>()
-
-        val nodeText = node.text?.toString() ?: ""
-        if (node.isClickable && nodeText.equals(text, ignoreCase = true)) {
-            result.add(node)
-        }
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                result.addAll(findButtonsByText(child, text))
+        try {
+            val nodeText = node.text?.toString() ?: ""
+            if (node.isClickable && nodeText.equals(text, ignoreCase = true)) {
+                result.add(node)
             }
-        }
 
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i)
+                if (child != null) {
+                    result.addAll(findButtonsByText(child, text))
+                }
+            }
+        } catch (_: Exception) {
+            // Safe fallback
+        }
         return result
     }
 

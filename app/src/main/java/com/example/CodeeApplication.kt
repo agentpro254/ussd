@@ -17,6 +17,23 @@ class CodeeApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        UssdSessionManager.initialize(database)
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            android.util.Log.e("CRASH_DEBUG", "CRASH in thread ${thread.name}: ${throwable.message}", throwable)
+            try {
+                getSharedPreferences("codee_crash_log", MODE_PRIVATE).edit()
+                    .putString("last_crash", "${throwable.javaClass.simpleName}: ${throwable.message}\n" + throwable.stackTraceToString())
+                    .putLong("crash_time", System.currentTimeMillis())
+                    .commit()
+            } catch (_: Exception) {
+            }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
+        try {
+            UssdSessionManager.initialize(database)
+        } catch (e: Exception) {
+            android.util.Log.e("CodeeApplication", "Failed to initialize database/session manager", e)
+        }
     }
 }
