@@ -26,7 +26,25 @@ class TransparentActivity : Activity() {
         val subscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION_ID, -1)
         val slotIndex = intent.getIntExtra(EXTRA_SLOT_INDEX, 0)
 
-        if (!code.isNullOrBlank()) {
+        val passedCallIntent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra("call_intent", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<Intent>("call_intent")
+        }
+
+        if (passedCallIntent != null) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                try {
+                    startActivity(passedCallIntent)
+                    Log.d(TAG, "🚀 Launched passed call_intent via TransparentActivity")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error launching passed call_intent", e)
+                }
+            } else {
+                Log.w(TAG, "⚠️ CALL_PHONE permission not granted in TransparentActivity")
+            }
+        } else if (!code.isNullOrBlank()) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
                 try {
                     val encodedUri = Uri.parse("tel:" + Uri.encode(code))

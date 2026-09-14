@@ -205,8 +205,7 @@ class UssdViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Trigger USSD execution directly via TelephonyManager.sendUssdRequest (Android 8.0 / API 26+)
-     * when CALL_PHONE permission is granted.
+     * Trigger USSD execution via Intent.ACTION_CALL
      */
     fun triggerNativeUssdRequest(
         code: String = _inputCode.value,
@@ -214,77 +213,7 @@ class UssdViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val cleanCode = code.trim()
         if (cleanCode.isBlank()) return
-
-        val context = getApplication<Application>()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            triggerTelephonyIntent(cleanCode, simSlot)
-            return
-        }
-
-        if (!PermissionManager.isCallPhoneGranted(context)) {
-            triggerTelephonyIntent(cleanCode, simSlot)
-            return
-        }
-
-        try {
-            val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            val selectedSim = _simCards.value.firstOrNull { it.slotIndex == simSlot }
-            val targetedTelephony = if (selectedSim != null && selectedSim.subscriptionId > 0) {
-                telephonyManager?.createForSubscriptionId(selectedSim.subscriptionId) ?: telephonyManager
-            } else {
-                telephonyManager
-            }
-
-            if (targetedTelephony == null) {
-                triggerTelephonyIntent(cleanCode, simSlot)
-                return
-            }
-
-            _statusMessage.value = "Sending native USSD request: $cleanCode..."
-            UssdSessionManager.startUssdSession(context, cleanCode, simSlot)
-
-            val handler = Handler(Looper.getMainLooper())
-            targetedTelephony.sendUssdRequest(
-                cleanCode,
-                object : TelephonyManager.UssdResponseCallback() {
-                    override fun onReceiveUssdResponse(
-                        telephonyManager: TelephonyManager?,
-                        request: String?,
-                        response: CharSequence?
-                    ) {
-                        val responseText = response?.toString() ?: ""
-                        _statusMessage.value = "Received USSD Response"
-                        UssdSessionManager.onUssdDialogCaptured(
-                            text = responseText,
-                            inputNode = null,
-                            sendButton = null,
-                            cancelButton = null
-                        )
-                    }
-
-                    override fun onReceiveUssdResponseFailed(
-                        telephonyManager: TelephonyManager?,
-                        request: String?,
-                        failureCode: Int
-                    ) {
-                        val reason = when (failureCode) {
-                            TelephonyManager.USSD_RETURN_FAILURE -> "Carrier returned failure"
-                            TelephonyManager.USSD_ERROR_SERVICE_UNAVAIL -> "Service unavailable"
-                            else -> "USSD execution failed (code $failureCode)"
-                        }
-                        _statusMessage.value = "USSD Request Failed: $reason"
-                        Log.w(TAG, "Native USSD response failed: $reason")
-                    }
-                },
-                handler
-            )
-        } catch (e: SecurityException) {
-            Log.e(TAG, "SecurityException during native USSD request, falling back to Intent", e)
-            triggerTelephonyIntent(cleanCode, simSlot)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error executing native USSD, falling back to Intent", e)
-            triggerTelephonyIntent(cleanCode, simSlot)
-        }
+        triggerTelephonyIntent(cleanCode, simSlot)
     }
 
     /**

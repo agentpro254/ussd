@@ -187,47 +187,28 @@ object UssdSessionManager {
             }
         }
 
-        // Execute internal USSD Request to the carrier network
-        // Immediately launch TransparentActivity (via ACTION_CALL) to send USSD code to carrier
+        // Execute internal USSD Request to the carrier network via ACTION_CALL
         if (!skipTransparentActivityLaunch) {
-            launchTransparentActivity(context, cleanCode, simSlot)
-        }
-
-        // Parallel reflection attempt
-        try {
-            ITelephonyReflection.sendUssdViaReflection(
+            SimpleUssdHandler.dialCode(
                 context = context,
-                ussdCode = cleanCode,
-                subId = -1,
-                callback = object : ITelephonyReflection.ReflectionCallback {
-                    override fun onSuccess(response: String) {
-                        timeoutManager.markResponseReceived()
-                        Log.i(TAG, "Carrier reflection response received: $response")
-                        handleCarrierResponse(response, isTerminalOverride = false)
-                    }
-
-                    override fun onError(error: String) {
-                        Log.w(TAG, "Carrier reflection error: $error")
-                    }
+                code = cleanCode,
+                subscriptionId = -1,
+                slotIndex = simSlot,
+                callback = { response, isSuccess ->
+                    Log.d(TAG, "SimpleUssdHandler callback: isSuccess=$isSuccess")
                 }
             )
-        } catch (e: Exception) {
-            Log.w(TAG, "ITelephonyReflection exception: ${e.message}")
         }
     }
 
     fun launchTransparentActivity(context: Context, code: String, simSlot: Int = 0) {
-        try {
-            val intent = Intent(context, TransparentActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                putExtra(TransparentActivity.EXTRA_USSD_CODE, code)
-                putExtra(TransparentActivity.EXTRA_SLOT_INDEX, simSlot)
-            }
-            context.startActivity(intent)
-            Log.d(TAG, "🚀 Fallback launched TransparentActivity (Intent.ACTION_CALL) for $code")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch TransparentActivity fallback", e)
-        }
+        SimpleUssdHandler.dialCode(
+            context = context,
+            code = code,
+            subscriptionId = -1,
+            slotIndex = simSlot,
+            callback = { _, _ -> }
+        )
     }
 
     /**
@@ -443,7 +424,6 @@ object UssdSessionManager {
         dialAttempts = 0
         isSessionRunning = false
         timeoutManager.cancelTimeout()
-        RealUssdHandler.cancelCurrentSession()
         val service = activeAccessibilityService?.get()
         val cancelBtn = lastCancelButton?.get()
         service?.dismissActiveDialog(cancelBtn)
@@ -460,7 +440,6 @@ object UssdSessionManager {
     fun dismissSession(context: Context? = null) {
         onSessionEnd()
         timeoutManager.cancelTimeout()
-        RealUssdHandler.cancelCurrentSession()
         val service = activeAccessibilityService?.get()
         val cancelBtn = lastCancelButton?.get()
         service?.dismissActiveDialog(cancelBtn)

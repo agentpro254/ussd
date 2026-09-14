@@ -178,9 +178,14 @@ class CodeeAccessibilityService : AccessibilityService() {
         Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType}")
 
         val eventPkg = event.packageName?.toString() ?: ""
-        if (eventPkg.startsWith("com.aistudio") ||
+        if (eventPkg == "com.android.settings" ||
+            eventPkg == "com.android.systemui" ||
+            eventPkg.startsWith("com.google.android.apps.nexuslauncher") ||
+            eventPkg.startsWith("com.aistudio") ||
             eventPkg.startsWith("com.example") ||
-            eventPkg.contains("codee", ignoreCase = true)) return
+            eventPkg.contains("codee", ignoreCase = true)) {
+            return
+        }
 
         // STEP 1: READ the dialog WHILE IT IS VISIBLE. Do not hide it yet.
         val directSource = event.source
@@ -189,7 +194,12 @@ class CodeeAccessibilityService : AccessibilityService() {
 
         if (directSource != null) {
             val srcPkg = directSource.packageName?.toString() ?: ""
-            if (!srcPkg.startsWith("com.aistudio") && !srcPkg.startsWith("com.example")) {
+            if (srcPkg != "com.android.settings" &&
+                srcPkg != "com.android.systemui" &&
+                !srcPkg.startsWith("com.google.android.apps.nexuslauncher") &&
+                !srcPkg.startsWith("com.aistudio") &&
+                !srcPkg.startsWith("com.example") &&
+                !srcPkg.contains("codee", ignoreCase = true)) {
                 val directText = extractUssdText(directSource)
                 if (directText != null && directText.length > 3 && looksLikeUssd(directText)) {
                     capturedText = directText
@@ -215,10 +225,15 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     private fun looksLikeUssd(text: String): Boolean {
-        val hasNumberedMenu = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+.+$""").containsMatchIn(text)
-        val hasKeywords = hasUssdKeywords(text)
-        val hasSymbols = text.contains("*") || text.contains("#")
-        return hasNumberedMenu || hasKeywords || hasSymbols
+        val hasNumberedMenu = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+\S+""").containsMatchIn(text)
+        val hasUssdKeywords = hasUssdKeywords(text)
+        // Reject anything too short, or that contains obvious non-USSD content
+        val hasNonUssdContent = text.contains("Accessibility") ||
+                text.contains("TalkBack") ||
+                text.contains("Settings") ||
+                text.contains("Magnification") ||
+                text.contains("Display size")
+        return (hasNumberedMenu || hasUssdKeywords) && !hasNonUssdContent
     }
 
     /**
@@ -252,7 +267,7 @@ class CodeeAccessibilityService : AccessibilityService() {
             rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
             eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
 
-            val numberedMenuRegex = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+.+$""")
+            val numberedMenuRegex = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+\S+""")
             val anyDigitAtLineStartRegex = Regex("""(?m)^\s*\d+""")
 
             for (windowRoot in candidateRoots) {
@@ -260,8 +275,11 @@ class CodeeAccessibilityService : AccessibilityService() {
                 val windowPkg = windowRoot.packageName?.toString() ?: ""
                 val windowClass = windowRoot.className?.toString() ?: ""
 
-                // Skip only if windowRoot.packageName equals our own package
-                if (windowPkg.startsWith("com.aistudio") ||
+                // Skip settings, systemui, launcher, or our own package
+                if (windowPkg == "com.android.settings" ||
+                    windowPkg == "com.android.systemui" ||
+                    windowPkg.startsWith("com.google.android.apps.nexuslauncher") ||
+                    windowPkg.startsWith("com.aistudio") ||
                     windowPkg.startsWith("com.example") ||
                     windowPkg.contains("codee", ignoreCase = true)) {
                     continue
@@ -274,6 +292,12 @@ class CodeeAccessibilityService : AccessibilityService() {
                 // Check acceptance criteria
                 val hasNumberedMenu = numberedMenuRegex.containsMatchIn(text)
                 val hasKeywords = hasUssdKeywords(text)
+                val hasNonUssdContent = text.contains("Accessibility") ||
+                        text.contains("TalkBack") ||
+                        text.contains("Settings") ||
+                        text.contains("Magnification") ||
+                        text.contains("Display size")
+
                 val isDialogWithDigits = (windowClass.contains("Dialog", ignoreCase = true) ||
                         windowClass.contains("AlertDialog", ignoreCase = true)) &&
                         anyDigitAtLineStartRegex.containsMatchIn(text)
@@ -282,7 +306,7 @@ class CodeeAccessibilityService : AccessibilityService() {
                     Log.d("ACCESS_DEBUG", "Numbered menu detected, accepting as USSD dialog")
                 }
 
-                if (hasNumberedMenu || hasKeywords || isDialogWithDigits) {
+                if ((hasNumberedMenu || hasKeywords || isDialogWithDigits) && !hasNonUssdContent) {
                     Log.d("ACCESS_DEBUG", "MATCH (universal) pkg=${windowRoot.packageName} class=${windowRoot.className} text=$text")
                     return Pair(text, windowRoot)
                 }
