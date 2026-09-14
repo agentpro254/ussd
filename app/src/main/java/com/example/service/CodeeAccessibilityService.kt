@@ -24,13 +24,6 @@ class CodeeAccessibilityService : AccessibilityService() {
         private var ussdCallback: ((String) -> Unit)? = null
         private var inputCallback: ((String) -> Unit)? = null
 
-        val ALLOWED_DIALERS = setOf(
-            "com.android.phone",
-            "com.google.android.dialer",
-            "com.android.incallui",
-            "com.android.server.telecom"
-        )
-
         fun getInstance(): CodeeAccessibilityService? = instance
 
         fun setUssdCallback(callback: ((String) -> Unit)?) {
@@ -143,50 +136,84 @@ class CodeeAccessibilityService : AccessibilityService() {
         instance = this
         UssdSessionManager.setAccessibilityServiceInstance(this)
 
-        // Configure the accessibility service to monitor all window and content changes
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                     AccessibilityEvent.TYPE_WINDOWS_CHANGED or
                     AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
                     AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED
+                    AccessibilityEvent.TYPE_VIEW_CLICKED or
+                    AccessibilityEvent.TYPE_VIEW_FOCUSED or
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                    AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
 
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-
-            // Leave packageNames null so all OEM dialers are monitored without strict filtering
             packageNames = null
 
-            flags = flags or
-                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
+                    AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
 
             notificationTimeout = 50
         }
-
         serviceInfo = info
-        Log.d("ACCESS_DEBUG", "onServiceConnected called. Package names: ${serviceInfo.packageNames?.joinToString()}")
+
+        Log.d("ACCESS_DEBUG", "SERVICE CONNECTED")
+        Log.d("ACCESS_DEBUG", "packageNames=${serviceInfo?.packageNames?.joinToString()}")
+        Log.d("ACCESS_DEBUG", "eventTypes=${serviceInfo?.eventTypes}")
+        Log.d("ACCESS_DEBUG", "flags=${serviceInfo?.flags}")
+        val canRetrieve = (serviceInfo?.capabilities ?: 0) and AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0
+        Log.d("ACCESS_DEBUG", "canRetrieveWindowContent=$canRetrieve")
+        Log.d("ACCESS_DEBUG", "FINAL eventTypes=${serviceInfo.eventTypes}")
+        Log.d("ACCESS_DEBUG", "FINAL flags=${serviceInfo.flags}")
+        Log.d("ACCESS_DEBUG", "FINAL capabilities=${serviceInfo.capabilities}")
         Log.d(TAG, "✅ Universal Codee Accessibility Service connected with FLAG_RETRIEVE_INTERACTIVE_WINDOWS")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        Log.d("ACCESS_DEBUG", "Event: pkg=${event.packageName}, type=${event.eventType}, text=${event.text}")
-        // Do NOT gate on event.packageName. The USSD dialog event may come from
-        // "android" or a child window with a null package. We rely on the window
-        // scan (findUssdDialogInWindows) to filter by real dialer package.
+        Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType} class=${event.className} text=${event.text}")
+
+        val eventPkg = event.packageName?.toString() ?: ""
+        if (eventPkg.startsWith("com.aistudio") ||
+            eventPkg.startsWith("com.example") ||
+            eventPkg.contains("codee", ignoreCase = true)) {
+            return
+        }
+
+        // HYBRID PATH 1: direct source check — bypasses window list entirely
+        val directSource = event.source
+        if (directSource != null) {
+            val srcPkg = directSource.packageName?.toString() ?: ""
+            if (!srcPkg.startsWith("com.aistudio") && !srcPkg.startsWith("com.example")) {
+                val directText = extractUssdText(directSource)
+                if (directText != null && directText.length > 3 && looksLikeUssd(directText)) {
+                    Log.d("ACCESS_DEBUG", "DIRECT SOURCE MATCH pkg=$srcPkg text=$directText")
+                    processUssdResponse(directText, directSource)
+                    return
+                }
+            }
+        }
+
+        // HYBRID PATH 2: window scan
         val dialog = findUssdDialogInWindows(event.source)
         if (dialog != null) {
             val (text, rootNode) = dialog
-            Log.d("ACCESS_DEBUG", "USSD dialog captured from dialer: $text")
+            Log.d("ACCESS_DEBUG", "WINDOW MATCH pkg=${rootNode.packageName} text=$text")
             bringAppToFront()
             processUssdResponse(text, rootNode)
         }
     }
 
+    private fun looksLikeUssd(text: String): Boolean {
+        val hasNumberedMenu = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+.+$""").containsMatchIn(text)
+        val hasKeywords = hasUssdKeywords(text)
+        val hasSymbols = text.contains("*") || text.contains("#")
+        return hasNumberedMenu || hasKeywords || hasSymbols
+    }
+
     /**
      * Iterates through all available interactive windows to find the system USSD dialog.
-     * ONLY inspects windows whose packageName is in ALLOWED_DIALERS.
-     * Skips any window with a null/blank package name.
+     * Package-agnostic global search across ALL windows without hardcoded dialer allowlists.
      */
     fun findUssdDialogInWindows(eventSource: AccessibilityNodeInfo? = null): Pair<String, AccessibilityNodeInfo>? {
         try {
@@ -194,43 +221,62 @@ class CodeeAccessibilityService : AccessibilityService() {
 
             // 1. All interactive windows (this is where the real dialer dialog lives)
             try {
-                for (window in windows) {
-                    val wRoot = window.root ?: continue
-                    candidateRoots.add(wRoot)
+                val allWindows = windows
+                Log.d("ACCESS_DEBUG", "TOTAL WINDOWS=${allWindows.size}")
+                for ((i, w) in allWindows.withIndex()) {
+                    val wRoot = w.root
+                    Log.d("ACCESS_DEBUG", "WIN[$i] type=${w.type} active=${w.isActive} focused=${w.isFocused} root=${wRoot?.packageName}/${wRoot?.className} childCount=${wRoot?.childCount}")
+                    if (wRoot != null) {
+                        candidateRoots.add(wRoot)
+                    } else {
+                        Log.w("ACCESS_DEBUG", "WIN[$i] root was null — overlay window. Falling back.")
+                        rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
+                        eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
+                    }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "Error listing windows: ${e.message}")
+                Log.e("ACCESS_DEBUG", "WINDOWS LIST FAILED", e)
             }
 
             // 2. Add active root and event source as fallback
             rootInActiveWindow?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
             eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
 
-            for (windowRoot in candidateRoots) {
-                Log.d("ACCESS_DEBUG", "Window pkg=${windowRoot.packageName}, class=${windowRoot.className}, childCount=${windowRoot.childCount}")
-                val windowPkg = windowRoot.packageName?.toString()
+            val numberedMenuRegex = Regex("""(?m)^\s*\d+\s*[\.\)\-\:]\s+.+$""")
+            val anyDigitAtLineStartRegex = Regex("""(?m)^\s*\d+""")
 
-                // STRICT: skip any window that is not the real system dialer.
-                if (windowPkg.isNullOrBlank()) continue
-                if (!ALLOWED_DIALERS.contains(windowPkg)) {
-                    Log.d("ACCESS_DEBUG", "REJECTED window pkg=$windowPkg")
-                    continue
-                }
+            for (windowRoot in candidateRoots) {
+                Log.d("ACCESS_DEBUG", "Window pkg=${windowRoot.packageName} class=${windowRoot.className} childCount=${windowRoot.childCount}")
+                val windowPkg = windowRoot.packageName?.toString() ?: ""
+                val windowClass = windowRoot.className?.toString() ?: ""
+
+                // Skip only if windowRoot.packageName equals our own package
                 if (windowPkg.startsWith("com.aistudio") ||
                     windowPkg.startsWith("com.example") ||
-                    windowPkg.contains("codee", ignoreCase = true)) continue
+                    windowPkg.contains("codee", ignoreCase = true)) {
+                    continue
+                }
 
-                // Extract the full visible text of the dialer card
+                // Extract the full text via extractUssdText(windowRoot)
                 val text = extractUssdText(windowRoot) ?: continue
-                if (text.isBlank()) continue
+                if (text.isBlank() || text.length < 3) continue
 
-                // Require at least one numbered menu line OR a strict USSD keyword.
-                if (!hasNumberedMenuLines(text) && !hasUssdKeywords(text)) continue
+                // Check acceptance criteria
+                val hasNumberedMenu = numberedMenuRegex.containsMatchIn(text)
+                val hasKeywords = hasUssdKeywords(text)
+                val isDialogWithDigits = (windowClass.contains("Dialog", ignoreCase = true) ||
+                        windowClass.contains("AlertDialog", ignoreCase = true)) &&
+                        anyDigitAtLineStartRegex.containsMatchIn(text)
 
-                Log.d("ACCESS_DEBUG", "MATCH: returning dialog with text=$text")
-                Log.d("ACCESS_DEBUG", "Found real USSD dialog in WINDOWS: $text")
-                bringAppToFront()
-                return Pair(text, windowRoot)
+                if (hasNumberedMenu) {
+                    Log.d("ACCESS_DEBUG", "Numbered menu detected, accepting as USSD dialog")
+                }
+
+                if (hasNumberedMenu || hasKeywords || isDialogWithDigits) {
+                    Log.d("ACCESS_DEBUG", "MATCH (universal) pkg=${windowRoot.packageName} class=${windowRoot.className} text=$text")
+                    bringAppToFront()
+                    return Pair(text, windowRoot)
+                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "Could not inspect all windows: ${e.message}")
@@ -312,22 +358,15 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     private fun extractTextFromNode(node: AccessibilityNodeInfo, builder: StringBuilder) {
-        // Add this node's text
         val nodeText = node.text?.toString()
-        if (!nodeText.isNullOrEmpty()) {
-            val className = node.className?.toString() ?: ""
-            if (!className.contains("Button", ignoreCase = true) && !className.contains("EditText", ignoreCase = true)) {
-                builder.append(nodeText).append("\n")
-            }
-        }
+        if (!nodeText.isNullOrEmpty()) builder.append(nodeText).append("\n")
 
-        // Recursively get text from children
+        val contentDesc = node.contentDescription?.toString()
+        if (!contentDesc.isNullOrEmpty()) builder.append(contentDesc).append("\n")
+
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                extractTextFromNode(child, builder)
-                child.recycle()
-            }
+            val child = node.getChild(i) ?: continue
+            extractTextFromNode(child, builder)
         }
     }
 
