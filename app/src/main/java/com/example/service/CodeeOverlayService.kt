@@ -13,12 +13,7 @@ class CodeeOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        if (action == ACTION_SHOW_OVERLAY) {
-            showOverlay()
-        } else if (action == ACTION_HIDE_OVERLAY) {
-            hideOverlay()
-        }
+        stopSelf()
         return START_NOT_STICKY
     }
 
