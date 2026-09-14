@@ -354,6 +354,10 @@ object UssdSessionManager {
         lastSendButton = if (sendButton != null) WeakReference(sendButton) else null
         lastCancelButton = if (cancelButton != null) WeakReference(cancelButton) else null
 
+        // Cache references BEFORE bringing app to front and hiding system dialog
+        activeAccessibilityService?.get()?.bringAppToFront()
+            ?: com.example.service.CodeeAccessibilityService.getInstance()?.bringAppToFront()
+
         if (isSessionActive) {
             handleCarrierResponse(text, isTerminalOverride = false)
         } else {

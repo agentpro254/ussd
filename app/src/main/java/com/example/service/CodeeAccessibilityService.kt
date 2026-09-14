@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.engine.UssdSessionManager
+import java.lang.ref.WeakReference
 
 class CodeeAccessibilityService : AccessibilityService() {
 
@@ -46,6 +47,9 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     private var isProcessing = false
+    private var lastInputNode: WeakReference<AccessibilityNodeInfo>? = null
+    private var lastSendButton: WeakReference<AccessibilityNodeInfo>? = null
+    private var lastCancelButton: WeakReference<AccessibilityNodeInfo>? = null
     private var lastUssdText = ""
     private var lastUssdTextNormalized = ""
     private var lastUssdTime = 0L
@@ -171,36 +175,42 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType} class=${event.className} text=${event.text}")
+        Log.d("ACCESS_DEBUG", "RAW EVENT pkg=${event.packageName} type=${event.eventType}")
 
         val eventPkg = event.packageName?.toString() ?: ""
         if (eventPkg.startsWith("com.aistudio") ||
             eventPkg.startsWith("com.example") ||
-            eventPkg.contains("codee", ignoreCase = true)) {
-            return
-        }
+            eventPkg.contains("codee", ignoreCase = true)) return
 
-        // HYBRID PATH 1: direct source check — bypasses window list entirely
+        // STEP 1: READ the dialog WHILE IT IS VISIBLE. Do not hide it yet.
         val directSource = event.source
+        var capturedText: String? = null
+        var capturedNode: AccessibilityNodeInfo? = null
+
         if (directSource != null) {
             val srcPkg = directSource.packageName?.toString() ?: ""
             if (!srcPkg.startsWith("com.aistudio") && !srcPkg.startsWith("com.example")) {
                 val directText = extractUssdText(directSource)
                 if (directText != null && directText.length > 3 && looksLikeUssd(directText)) {
-                    Log.d("ACCESS_DEBUG", "DIRECT SOURCE MATCH pkg=$srcPkg text=$directText")
-                    processUssdResponse(directText, directSource)
-                    return
+                    capturedText = directText
+                    capturedNode = directSource
+                    Log.d("ACCESS_DEBUG", "DIRECT SOURCE CAPTURED pkg=$srcPkg text=$directText")
                 }
             }
         }
 
-        // HYBRID PATH 2: window scan
-        val dialog = findUssdDialogInWindows(event.source)
-        if (dialog != null) {
-            val (text, rootNode) = dialog
-            Log.d("ACCESS_DEBUG", "WINDOW MATCH pkg=${rootNode.packageName} text=$text")
-            bringAppToFront()
-            processUssdResponse(text, rootNode)
+        if (capturedText == null) {
+            val dialog = findUssdDialogInWindows(event.source)
+            if (dialog != null) {
+                capturedText = dialog.first
+                capturedNode = dialog.second
+                Log.d("ACCESS_DEBUG", "WINDOW CAPTURED pkg=${capturedNode.packageName} text=$capturedText")
+            }
+        }
+
+        // STEP 2: Now that we have the text, notify the session manager.
+        if (capturedText != null && capturedNode != null) {
+            processUssdResponse(capturedText, capturedNode)
         }
     }
 
@@ -274,7 +284,6 @@ class CodeeAccessibilityService : AccessibilityService() {
 
                 if (hasNumberedMenu || hasKeywords || isDialogWithDigits) {
                     Log.d("ACCESS_DEBUG", "MATCH (universal) pkg=${windowRoot.packageName} class=${windowRoot.className} text=$text")
-                    bringAppToFront()
                     return Pair(text, windowRoot)
                 }
             }
@@ -386,8 +395,14 @@ class CodeeAccessibilityService : AccessibilityService() {
 
         Log.d(TAG, "📱 USSD Response captured: $text")
 
-        // [BRING APP TO FRONT]: Ensure our custom app covers the system dialog without closing it
-        bringAppToFront()
+        // Store node references while visible
+        val inputNode = findInputField(rootNode)
+        val sendButton = findSendButton(rootNode)
+        val cancelButton = findCancelButton(rootNode)
+
+        lastInputNode = if (inputNode != null) WeakReference(inputNode) else null
+        lastSendButton = if (sendButton != null) WeakReference(sendButton) else null
+        lastCancelButton = if (cancelButton != null) WeakReference(cancelButton) else null
 
         // Broadcast Intent for system receivers
         try {
@@ -408,11 +423,7 @@ class CodeeAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Find input nodes and notify session manager if active
-        val inputNode = findInputField(rootNode)
-        val sendButton = findSendButton(rootNode)
-        val cancelButton = findCancelButton(rootNode)
-
+        // Notify session manager (which caches nodes and then brings app to front)
         UssdSessionManager.onUssdDialogCaptured(
             text = text,
             inputNode = inputNode,
@@ -423,13 +434,46 @@ class CodeeAccessibilityService : AccessibilityService() {
 
     /**
      * Respond to USSD with user input (e.g., "1", "2", PIN).
-     * Automatically injects text into the background system dialog and clicks 'SEND'.
+     * Injects text into the dialog and clicks 'SEND', then brings the app to the front.
      */
     fun respondToUssd(response: String): Boolean {
         try {
             isProcessing = true
-            
-            // Gather candidate roots: active root first, followed by all interactive window roots
+
+            // STEP 1: Find the input field from lastInputNode (cached earlier)
+            val inputField = lastInputNode?.get()
+            if (inputField != null) {
+                // STEP 2: Set the text
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, response)
+                }
+                val setTextSuccess = inputField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                if (!setTextSuccess) {
+                    try {
+                        inputField.text = response
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not set input field text directly: ${e.message}")
+                    }
+                }
+
+                // STEP 3: Click send button
+                val sendButton = lastSendButton?.get() ?: findSendButton(inputField)
+                if (sendButton != null) {
+                    val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.d(TAG, "✅ Clicked Send button with response '$response' (success=$clicked)")
+                    isProcessing = false
+                    // STEP 4: THEN call bringAppToFront()
+                    bringAppToFront()
+                    return true
+                }
+
+                inputField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                isProcessing = false
+                bringAppToFront()
+                return true
+            }
+
+            // Fallback: Check candidate roots if cached lastInputNode was null
             val candidateRoots = mutableListOf<AccessibilityNodeInfo>()
             rootInActiveWindow?.let { candidateRoots.add(it) }
             try {
@@ -444,23 +488,20 @@ class CodeeAccessibilityService : AccessibilityService() {
             }
 
             for (root in candidateRoots) {
-                // Find input field
-                val inputField = findInputField(root)
-                if (inputField != null) {
-                    // Set text via Accessibility action or text property
+                val foundInput = findInputField(root)
+                if (foundInput != null) {
                     val args = Bundle().apply {
                         putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, response)
                     }
-                    val setTextSuccess = inputField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                    val setTextSuccess = foundInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
                     if (!setTextSuccess) {
                         try {
-                            inputField.text = response
+                            foundInput.text = response
                         } catch (e: Exception) {
                             Log.w(TAG, "Could not set input field text directly: ${e.message}")
                         }
                     }
 
-                    // Find and click send button
                     val sendButton = findSendButton(root)
                     if (sendButton != null) {
                         val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -470,8 +511,7 @@ class CodeeAccessibilityService : AccessibilityService() {
                         return true
                     }
 
-                    // If no send button, try clicking input field or submit
-                    inputField.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    foundInput.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     isProcessing = false
                     bringAppToFront()
                     return true
@@ -498,6 +538,12 @@ class CodeeAccessibilityService : AccessibilityService() {
     }
 
     fun submitTextToActiveDialog(node: AccessibilityNodeInfo?, text: String, sendButton: AccessibilityNodeInfo?): Boolean {
+        if (node != null) {
+            lastInputNode = WeakReference(node)
+        }
+        if (sendButton != null) {
+            lastSendButton = WeakReference(sendButton)
+        }
         return respondToUssd(text)
     }
 
