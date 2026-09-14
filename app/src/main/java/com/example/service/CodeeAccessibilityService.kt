@@ -165,10 +165,12 @@ class CodeeAccessibilityService : AccessibilityService() {
         }
 
         serviceInfo = info
+        Log.d("ACCESS_DEBUG", "onServiceConnected called. Package names: ${serviceInfo.packageNames?.joinToString()}")
         Log.d(TAG, "✅ Universal Codee Accessibility Service connected with FLAG_RETRIEVE_INTERACTIVE_WINDOWS")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        Log.d("ACCESS_DEBUG", "Event: pkg=${event.packageName}, type=${event.eventType}, text=${event.text}")
         // Do NOT gate on event.packageName. The USSD dialog event may come from
         // "android" or a child window with a null package. We rely on the window
         // scan (findUssdDialogInWindows) to filter by real dialer package.
@@ -205,11 +207,15 @@ class CodeeAccessibilityService : AccessibilityService() {
             eventSource?.let { if (!candidateRoots.contains(it)) candidateRoots.add(it) }
 
             for (windowRoot in candidateRoots) {
+                Log.d("ACCESS_DEBUG", "Window pkg=${windowRoot.packageName}, class=${windowRoot.className}, childCount=${windowRoot.childCount}")
                 val windowPkg = windowRoot.packageName?.toString()
 
                 // STRICT: skip any window that is not the real system dialer.
                 if (windowPkg.isNullOrBlank()) continue
-                if (!ALLOWED_DIALERS.contains(windowPkg)) continue
+                if (!ALLOWED_DIALERS.contains(windowPkg)) {
+                    Log.d("ACCESS_DEBUG", "REJECTED window pkg=$windowPkg")
+                    continue
+                }
                 if (windowPkg.startsWith("com.aistudio") ||
                     windowPkg.startsWith("com.example") ||
                     windowPkg.contains("codee", ignoreCase = true)) continue
@@ -221,6 +227,7 @@ class CodeeAccessibilityService : AccessibilityService() {
                 // Require at least one numbered menu line OR a strict USSD keyword.
                 if (!hasNumberedMenuLines(text) && !hasUssdKeywords(text)) continue
 
+                Log.d("ACCESS_DEBUG", "MATCH: returning dialog with text=$text")
                 Log.d("ACCESS_DEBUG", "Found real USSD dialog in WINDOWS: $text")
                 bringAppToFront()
                 return Pair(text, windowRoot)
